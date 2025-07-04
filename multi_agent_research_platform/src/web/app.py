@@ -38,9 +38,8 @@ class MultiAgentWebApp:
         log_config = LogConfig(
             log_dir=Path("logs"),
             log_level=LogLevel.DEBUG if environment in ["debug", "development"] else LogLevel.INFO,
-            log_format=LogFormat.STRUCTURED,
-            max_log_files=100,
-            log_retention_days=30
+            log_format=LogFormat.JSON,
+            retention_days=30
         )
         
         platform_logger = setup_logging(log_config)
@@ -51,10 +50,12 @@ class MultiAgentWebApp:
         self.logger = logging.getLogger("web_app")
         self.logger.setLevel(log_config.log_level.value)
         
-        # Initialize services
-        self.session_service = SessionService()
-        self.memory_service = MemoryService()
-        self.artifact_service = ArtifactService()
+        # Initialize services using factory
+        from ..services.factory import create_development_services
+        services = create_development_services(platform_logger)
+        self.session_service = services['session']
+        self.memory_service = services['memory']
+        self.artifact_service = services['artifact']
         
         # Web interface
         self.web_interface = None

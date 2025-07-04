@@ -47,46 +47,46 @@ tests/
    ```bash
    # Install all dependencies with uv (recommended - all test deps already in pyproject.toml)
    uv sync
-   
+
    # To add new test dependencies in the future, use:
    uv add <package-name>  # Adds to main dependencies
    # or
    uv add <package-name> --group dev  # Adds to dev group
-   
+
    # Current test dependencies already included:
-   # pytest>=8.4.1, pytest-asyncio>=1.0.0, pytest-cov>=6.2.1, 
+   # pytest>=8.4.1, pytest-asyncio>=1.0.0, pytest-cov>=6.2.1,
    # pytest-mock>=3.14.1, pytest-timeout>=2.4.0, psutil>=7.0.0
-   
+
    # Alternative: Install manually with pip
    pip install pytest pytest-asyncio pytest-cov pytest-timeout pytest-mock psutil
    ```
 
 2. **Configure Authentication** (required for tests that use Google AI):
-   
+
    ⚠️ **IMPORTANT**: You must update your `.env` file for testing:
-   
+
    ```bash
    # In your .env file, change this line for testing:
    GOOGLE_GENAI_USE_VERTEXAI=False  # REQUIRED FOR TESTING WITH API KEYS
    # GOOGLE_GENAI_USE_VERTEXAI=True  # Default production setting
-   
+
    # Then set your API key:
    GOOGLE_API_KEY=your_google_api_key_from_gcp
    ```
-   
+
    **Testing Setup Steps**:
    1. Get an API key from Google Cloud Console > APIs & Services > Credentials
    2. Edit `.env` and set `GOOGLE_GENAI_USE_VERTEXAI=False`
    3. Set `GOOGLE_API_KEY=your_api_key`
    4. Run tests
    5. **Remember to change back to `True` for production deployment**
-   
+
    **Alternative environment variables**:
    ```bash
    # For local testing (override .env temporarily)
    export GOOGLE_API_KEY="your_google_api_key"
    export GOOGLE_GENAI_USE_VERTEXAI=False
-   
+
    # External service APIs (for integration tests)
    export OPENWEATHER_API_KEY="your_openweather_key"
    export PERPLEXITY_API_KEY="your_perplexity_key"
@@ -101,7 +101,7 @@ tests/
 
 ```bash
 # MAKE SURE YOU'RE IN THE RIGHT DIRECTORY FIRST!
-cd /home/kjdrag/lrepos/gemini-test1/multi_agent_research_platform
+cd /home/kjdrag/lrepos/multi-agent-adk-integration/multi_agent_research_platform
 
 # Option 1: Use test runner directly (handles environment automatically)
 uv run python run_tests.py unit                    # Run all unit tests
@@ -111,8 +111,8 @@ uv run python run_tests.py specific tests/unit/test_agents.py  # Run specific te
 uv run python run_tests.py coverage                # Generate coverage report
 
 # Option 2: If uv is not available, use python directly (but set PYTHONPATH)
-PYTHONPATH=. python run_tests.py unit             
-PYTHONPATH=. python run_tests.py integration -v   
+PYTHONPATH=. python run_tests.py unit
+PYTHONPATH=. python run_tests.py integration -v
 
 # WRONG - These don't work:
 # uv run_tests.py                    # Missing 'python'
@@ -160,7 +160,7 @@ Test individual components in isolation with mocked dependencies.
 async def test_llm_agent_creation(self, mock_google_ai_client):
     config = LLMAgentConfig(role="researcher", name="Test Agent")
     agent = LLMAgent(config=config, tools=[])
-    
+
     assert agent.name == "Test Agent"
     assert AgentCapability.RESEARCH in agent.capabilities
 ```
@@ -182,13 +182,13 @@ async def test_agent_collaboration(self, agent_factory, test_agent_registry):
     # Create multiple agents
     researcher = await agent_factory.create_llm_agent(role="researcher")
     analyst = await agent_factory.create_llm_agent(role="analyst")
-    
+
     # Test collaboration workflow
     result = await orchestrator.orchestrate_task(
         task="Complex research task",
         strategy=OrchestrationStrategy.CONSENSUS
     )
-    
+
     assert result.success
     assert len(result.agents_used) >= 2
 ```
@@ -210,10 +210,10 @@ async def test_complete_research_workflow_via_api(self, web_app):
     async with httpx.AsyncClient(app=web_app) as client:
         # Create agent
         agent_response = await client.post("/api/v1/agents", json={...})
-        
+
         # Execute task
         task_response = await client.post("/api/v1/orchestration/task", json={...})
-        
+
         assert task_response.status_code == 200
         assert task_data["success"] is True
 ```
@@ -237,7 +237,7 @@ async def test_concurrent_agent_load(self, agent_factory, performance_metrics):
     for load in [10, 25, 50, 100]:
         tasks = [agent.execute_task(f"Task {i}") for i in range(load)]
         results = await asyncio.gather(*tasks)
-        
+
         # Verify performance requirements
         assert success_rate >= 0.90
         assert avg_response_time < 1.0
@@ -248,7 +248,7 @@ async def test_concurrent_agent_load(self, agent_factory, performance_metrics):
 Tests are organized using pytest markers for flexible execution:
 
 - `@pytest.mark.unit` - Unit tests
-- `@pytest.mark.integration` - Integration tests  
+- `@pytest.mark.integration` - Integration tests
 - `@pytest.mark.e2e` - End-to-end tests
 - `@pytest.mark.performance` - Performance tests
 - `@pytest.mark.slow` - Slow-running tests
@@ -350,10 +350,10 @@ The testing framework tracks various quality metrics:
        # Arrange
        agent = await agent_factory.create_llm_agent(role="researcher")
        task = "Test task"
-       
+
        # Act
        result = await agent.execute_task(task)
-       
+
        # Assert
        assert result.success
        assert len(result.result) > 0
