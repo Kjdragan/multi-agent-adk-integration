@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Multi-Agent Research Platform{% endblock %}
+
+{% block content %}
+<div id="dashboardContent">
+    <!-- Dashboard content will be dynamically loaded here -->
+    <div id="overviewDashboard" class="dashboard-view">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="fas fa-tachometer-alt"></i> System Overview</h2>
+            <div>
+                <button class="btn btn-outline-primary btn-sm" onclick="refreshDashboard()">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="toggleAutoRefresh()">
+                    <i class="fas fa-play"></i> Auto-refresh
+                </button>
+            </div>
+        </div>
+        
+        <!-- System Metrics Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-users fa-2x mb-2"></i>
+                        <h4 id="totalAgents">-</h4>
+                        <small>Total Agents</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-tasks fa-2x mb-2"></i>
+                        <h4 id="activeTasks">-</h4>
+                        <small>Active Tasks</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-chart-line fa-2x mb-2"></i>
+                        <h4 id="avgPerformance">-</h4>
+                        <small>Avg Performance</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card metric-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-clock fa-2x mb-2"></i>
+                        <h4 id="systemUptime">-</h4>
+                        <small>System Uptime</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- System Status and Activity -->
+        <div class="row">
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-heartbeat"></i> System Health</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                                <span>Web Interface</span>
+                                <span class="status-badge status-active">Active</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                                <span>Agent Registry</span>
+                                <span class="status-badge status-active">Active</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                                <span>Orchestrator</span>
+                                <span class="status-badge status-active">Active</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                                <span>WebSocket Server</span>
+                                <span class="status-badge status-active">Active</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-clock"></i> Recent Activity</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="recentActivity" class="task-timeline">
+                            <!-- Recent activity items will be populated here -->
+                            <div class="task-timeline-item">
+                                <small class="text-muted">Loading recent activity...</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Charts -->
+        <div class="row">
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie"></i> Agent Distribution</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="agentDistributionChart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-area"></i> Performance Trends</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="performanceTrendsChart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Other dashboard views will be shown/hidden as needed -->
+    <div id="agentsDashboard" class="dashboard-view" style="display:none;">
+        <!-- Agents dashboard content -->
+    </div>
+    
+    <div id="tasksDashboard" class="dashboard-view" style="display:none;">
+        <!-- Tasks dashboard content -->
+    </div>
+    
+    <div id="performanceDashboard" class="dashboard-view" style="display:none;">
+        <!-- Performance dashboard content -->
+    </div>
+    
+    <div id="debugDashboard" class="dashboard-view" style="display:none;">
+        <!-- Debug dashboard content -->
+    </div>
+    
+    <div id="logsDashboard" class="dashboard-view" style="display:none;">
+        <!-- Logs dashboard content -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Chart instances
+    let agentDistributionChart = null;
+    let performanceTrendsChart = null;
+    
+    // Dashboard data
+    let dashboardData = {};
+    
+    // Initialize charts
+    function initializeCharts() {
+        // Agent Distribution Chart
+        const agentCtx = document.getElementById('agentDistributionChart').getContext('2d');
+        agentDistributionChart = new Chart(agentCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['LLM Agents', 'Workflow Agents', 'Custom Agents'],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: [
+                        '#FF6384',
+                        '#36A2EB',
+                        '#FFCE56'
+                    ],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+        
+        // Performance Trends Chart
+        const perfCtx = document.getElementById('performanceTrendsChart').getContext('2d');
+        performanceTrendsChart = new Chart(perfCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Success Rate (%)',
+                    data: [],
+                    borderColor: '#36A2EB',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }, {
+                    label: 'Response Time (ms)',
+                    data: [],
+                    borderColor: '#FF6384',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    yAxisID: 'y1'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        max: 100
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                    }
+                }
+            }
+        });
+    }
+    
+    // Dashboard management functions
+    function showDashboard(dashboardName) {
+        // Hide all dashboards
+        document.querySelectorAll('.dashboard-view').forEach(view => {
+            view.style.display = 'none';
+        });
+        
+        // Show selected dashboard
+        const targetDashboard = document.getElementById(`${dashboardName}Dashboard`);
+        if (targetDashboard) {
+            targetDashboard.style.display = 'block';
+        }
+        
+        // Update navigation
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.classList.remove('active');
+        });
+        const activeLink = document.querySelector(`[href="#${dashboardName}"]`);
+        if (activeLink) {
+            activeLink.classList.add('active');
+        }
+        
+        currentDashboard = dashboardName;
+        
+        // Load dashboard data
+        loadDashboardContent(dashboardName);
+    }
+    
+    async function loadDashboardContent(dashboardName) {
+        try {
+            // Load system status
+            const statusResponse = await fetch('/status');
+            const statusData = await statusResponse.json();
+            
+            if (dashboardName === 'overview') {
+                updateOverviewDashboard(statusData);
+            }
+            
+        } catch (error) {
+            console.error(`Failed to load ${dashboardName} dashboard:`, error);
+        }
+    }
+    
+    function updateOverviewDashboard(data) {
+        // Update metric cards
+        if (data.agents) {
+            document.getElementById('totalAgents').textContent = data.agents.total_agents || 0;
+        }
+        
+        if (data.web_interface) {
+            const uptime = data.web_interface.uptime_seconds || 0;
+            document.getElementById('systemUptime').textContent = formatUptime(uptime);
+        }
+        
+        // Update charts
+        if (data.agents && data.agents.agents_by_type) {
+            updateAgentDistributionChart(data.agents.agents_by_type);
+        }
+        
+        // Update recent activity
+        updateRecentActivity(data);
+    }
+    
+    function updateAgentDistributionChart(agentsByType) {
+        if (!agentDistributionChart) return;
+        
+        const labels = Object.keys(agentsByType).map(type => 
+            type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())
+        );
+        const data = Object.values(agentsByType);
+        
+        agentDistributionChart.data.labels = labels;
+        agentDistributionChart.data.datasets[0].data = data;
+        agentDistributionChart.update();
+    }
+    
+    function updateRecentActivity(data) {
+        const activityContainer = document.getElementById('recentActivity');
+        activityContainer.innerHTML = '';
+        
+        // Add some sample activity items
+        const activities = [
+            { time: new Date(), message: 'System started successfully', type: 'info' },
+            { time: new Date(Date.now() - 60000), message: 'Demo agents initialized', type: 'success' },
+            { time: new Date(Date.now() - 120000), message: 'Web interface started', type: 'info' }
+        ];
+        
+        activities.forEach(activity => {
+            const item = document.createElement('div');
+            item.className = 'task-timeline-item';
+            item.innerHTML = `
+                <div>
+                    <strong>${activity.message}</strong>
+                    <br>
+                    <small class="text-muted">${formatTime(activity.time)}</small>
+                </div>
+            `;
+            activityContainer.appendChild(item);
+        });
+    }
+    
+    // Utility functions
+    function formatUptime(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        return `${hours}h ${minutes}m`;
+    }
+    
+    function formatTime(date) {
+        return date.toLocaleTimeString();
+    }
+    
+    function refreshDashboard() {
+        loadDashboardContent(currentDashboard);
+    }
+    
+    let autoRefreshEnabled = false;
+    let autoRefreshInterval = null;
+    
+    function toggleAutoRefresh() {
+        autoRefreshEnabled = !autoRefreshEnabled;
+        const btn = document.querySelector('[onclick="toggleAutoRefresh()"]');
+        
+        if (autoRefreshEnabled) {
+            btn.innerHTML = '<i class="fas fa-pause"></i> Auto-refresh';
+            btn.classList.remove('btn-outline-secondary');
+            btn.classList.add('btn-outline-success');
+            
+            autoRefreshInterval = setInterval(() => {
+                refreshDashboard();
+            }, 5000);
+        } else {
+            btn.innerHTML = '<i class="fas fa-play"></i> Auto-refresh';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-outline-secondary');
+            
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+    }
+    
+    // WebSocket message handlers
+    window.updateAgentStatus = function(data) {
+        // Update agent status in real-time
+        console.log('Agent status update:', data);
+    };
+    
+    window.updateTaskProgress = function(data) {
+        // Update task progress in real-time
+        console.log('Task progress update:', data);
+    };
+    
+    window.updatePerformanceMetrics = function(data) {
+        // Update performance metrics in real-time
+        console.log('Performance metrics update:', data);
+    };
+    
+    window.addLogEntry = function(data) {
+        // Add new log entry in real-time
+        console.log('New log entry:', data);
+    };
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeCharts();
+        showDashboard('overview');
+        
+        // Enable auto-refresh by default
+        toggleAutoRefresh();
+    });
+</script>
+{% endblock %}

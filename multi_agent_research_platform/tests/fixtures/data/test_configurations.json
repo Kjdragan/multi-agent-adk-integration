@@ -1,0 +1,317 @@
+{
+  "agent_configurations": {
+    "test_llm_agents": [
+      {
+        "name": "Test Researcher",
+        "role": "researcher",
+        "config": {
+          "temperature": 0.7,
+          "max_tokens": 2000,
+          "timeout_seconds": 60,
+          "model": "gemini-2.5-flash"
+        },
+        "expected_capabilities": ["research", "analysis"]
+      },
+      {
+        "name": "Test Writer",
+        "role": "writer", 
+        "config": {
+          "temperature": 0.8,
+          "max_tokens": 3000,
+          "timeout_seconds": 90,
+          "model": "gemini-2.5-flash"
+        },
+        "expected_capabilities": ["writing", "editing"]
+      },
+      {
+        "name": "Test Analyst",
+        "role": "analyst",
+        "config": {
+          "temperature": 0.3,
+          "max_tokens": 2500,
+          "timeout_seconds": 75,
+          "model": "gemini-2.5-flash"
+        },
+        "expected_capabilities": ["analysis", "data_processing"]
+      },
+      {
+        "name": "Test Critic",
+        "role": "critic",
+        "config": {
+          "temperature": 0.4,
+          "max_tokens": 2000,
+          "timeout_seconds": 60,
+          "model": "gemini-2.5-flash"
+        },
+        "expected_capabilities": ["critical_thinking", "quality_assurance"]
+      }
+    ],
+    "test_custom_agents": [
+      {
+        "name": "Test Fact Checker",
+        "agent_type": "fact_checker",
+        "config": {
+          "domain": "general",
+          "confidence_threshold": 0.8,
+          "verification_sources": ["web_search", "knowledge_base"]
+        },
+        "expected_capabilities": ["fact_checking", "verification"]
+      },
+      {
+        "name": "Test Domain Expert",
+        "agent_type": "domain_expert",
+        "config": {
+          "domain": "technology",
+          "expertise_level": "senior",
+          "specializations": ["ai", "cloud_computing", "cybersecurity"]
+        },
+        "expected_capabilities": ["domain_expertise", "technical_knowledge"]
+      },
+      {
+        "name": "Test Data Analyst",
+        "agent_type": "data_analyst",
+        "config": {
+          "data_types": ["quantitative", "qualitative"],
+          "analysis_methods": ["statistical", "trend_analysis", "correlation"],
+          "visualization_capable": true
+        },
+        "expected_capabilities": ["data_processing", "statistical_analysis", "visualization"]
+      }
+    ],
+    "test_workflow_agents": [
+      {
+        "name": "Sequential Test Workflow",
+        "workflow_type": "sequential",
+        "config": {
+          "max_parallel_tasks": 1,
+          "error_handling": "stop_on_failure",
+          "timeout_seconds": 300
+        }
+      },
+      {
+        "name": "Parallel Test Workflow",
+        "workflow_type": "parallel",
+        "config": {
+          "max_parallel_tasks": 5,
+          "error_handling": "continue_on_failure",
+          "timeout_seconds": 180
+        }
+      },
+      {
+        "name": "Hybrid Test Workflow",
+        "workflow_type": "hybrid",
+        "config": {
+          "max_parallel_tasks": 3,
+          "error_handling": "retry_failed",
+          "timeout_seconds": 240,
+          "retry_attempts": 2
+        }
+      }
+    ]
+  },
+  "orchestration_configurations": {
+    "test_strategies": [
+      {
+        "strategy": "single_best",
+        "description": "Select single best agent for task",
+        "config": {
+          "selection_criteria": ["capability_match", "performance_history"],
+          "fallback_enabled": true
+        }
+      },
+      {
+        "strategy": "consensus",
+        "description": "Use multiple agents and find consensus",
+        "config": {
+          "min_agents": 3,
+          "consensus_threshold": 0.7,
+          "max_agents": 5,
+          "voting_method": "weighted"
+        }
+      },
+      {
+        "strategy": "parallel_all",
+        "description": "Execute with all suitable agents in parallel",
+        "config": {
+          "max_parallel_agents": 10,
+          "result_aggregation": "best_result",
+          "timeout_behavior": "return_partial"
+        }
+      },
+      {
+        "strategy": "competitive",
+        "description": "Agents compete for best result",
+        "config": {
+          "evaluation_criteria": ["quality", "speed", "accuracy"],
+          "winner_selection": "multi_criteria",
+          "competition_timeout": 120
+        }
+      },
+      {
+        "strategy": "adaptive",
+        "description": "Dynamically select strategy based on task",
+        "config": {
+          "strategy_selection_rules": {
+            "simple_task": "single_best",
+            "complex_task": "consensus",
+            "urgent_task": "parallel_all",
+            "high_stakes_task": "competitive"
+          },
+          "task_classification_enabled": true
+        }
+      }
+    ]
+  },
+  "test_environments": {
+    "unit_test": {
+      "description": "Unit testing environment with mocked dependencies",
+      "config": {
+        "mock_external_apis": true,
+        "mock_database": true,
+        "mock_mcp_servers": true,
+        "enable_logging": true,
+        "log_level": "DEBUG",
+        "test_timeout_seconds": 30
+      }
+    },
+    "integration_test": {
+      "description": "Integration testing with real dependencies",
+      "config": {
+        "mock_external_apis": false,
+        "mock_database": false,
+        "mock_mcp_servers": false,
+        "enable_logging": true,
+        "log_level": "INFO",
+        "test_timeout_seconds": 120,
+        "require_api_keys": true
+      }
+    },
+    "performance_test": {
+      "description": "Performance testing environment",
+      "config": {
+        "mock_external_apis": true,
+        "mock_database": false,
+        "enable_performance_monitoring": true,
+        "performance_metrics_collection": true,
+        "test_timeout_seconds": 300,
+        "concurrent_test_limit": 50
+      }
+    },
+    "e2e_test": {
+      "description": "End-to-end testing environment",
+      "config": {
+        "mock_external_apis": false,
+        "full_system_integration": true,
+        "test_data_cleanup": true,
+        "test_timeout_seconds": 600,
+        "require_all_services": true
+      }
+    }
+  },
+  "mock_responses": {
+    "llm_responses": {
+      "research_response": "Based on my research, here are the key findings: [1] Topic overview with relevant statistics, [2] Current trends and developments, [3] Key challenges and opportunities, [4] Future outlook and predictions. This analysis is based on comprehensive review of available sources.",
+      "analysis_response": "Analysis reveals several important insights: [1] Data patterns show clear correlation between variables, [2] Trend analysis indicates 15% growth over the past year, [3] Comparative analysis highlights three key differentiators, [4] Risk assessment suggests moderate risk level with mitigation strategies.",
+      "writing_response": "Here is the requested content: [Introduction] The topic represents a significant development in the field. [Main Content] Key points include comprehensive coverage of the subject matter with detailed explanations and examples. [Conclusion] In summary, the analysis demonstrates clear value and actionable insights.",
+      "synthesis_response": "Synthesis of information from multiple sources reveals: [1] Common themes across all sources include consistency in core findings, [2] Divergent viewpoints primarily focus on implementation approaches, [3] Gaps in current research suggest areas for future investigation, [4] Integrated recommendations based on comprehensive analysis."
+    },
+    "tool_responses": {
+      "weather_api_response": {
+        "weather": [{"main": "Clear", "description": "clear sky"}],
+        "main": {"temp": 22.5, "feels_like": 23.1, "humidity": 65},
+        "wind": {"speed": 3.2, "deg": 180},
+        "name": "Test City"
+      },
+      "search_api_response": {
+        "results": [
+          {
+            "title": "Test Search Result 1",
+            "snippet": "This is a test search result for testing purposes",
+            "url": "https://example.com/result1"
+          },
+          {
+            "title": "Test Search Result 2", 
+            "snippet": "Another test search result with relevant information",
+            "url": "https://example.com/result2"
+          }
+        ]
+      },
+      "mcp_tool_response": {
+        "result": "MCP tool executed successfully",
+        "data": {"test_value": 42, "status": "completed"},
+        "metadata": {"execution_time_ms": 150, "tool_version": "1.0.0"}
+      }
+    }
+  },
+  "performance_baselines": {
+    "agent_creation": {
+      "max_time_seconds": 0.5,
+      "target_time_seconds": 0.1,
+      "memory_usage_mb": 10
+    },
+    "task_execution": {
+      "simple_task_max_seconds": 5,
+      "complex_task_max_seconds": 30,
+      "target_success_rate": 0.95,
+      "max_memory_per_task_mb": 50
+    },
+    "orchestration": {
+      "single_agent_max_seconds": 10,
+      "multi_agent_max_seconds": 60,
+      "consensus_max_seconds": 120,
+      "parallel_efficiency_ratio": 0.8
+    },
+    "workflow_execution": {
+      "sequential_overhead_percent": 10,
+      "parallel_speedup_ratio": 0.7,
+      "error_recovery_max_seconds": 30
+    }
+  },
+  "quality_metrics": {
+    "response_quality": {
+      "min_length_characters": 50,
+      "max_length_characters": 10000,
+      "coherence_score_min": 0.7,
+      "relevance_score_min": 0.8,
+      "factual_accuracy_min": 0.9
+    },
+    "system_reliability": {
+      "uptime_percentage_min": 99.5,
+      "error_rate_max_percent": 1.0,
+      "recovery_time_max_seconds": 30,
+      "data_consistency_score_min": 0.99
+    },
+    "user_experience": {
+      "response_time_p95_seconds": 15,
+      "response_time_p99_seconds": 30,
+      "user_satisfaction_score_min": 4.0,
+      "task_completion_rate_min": 0.95
+    }
+  },
+  "test_data_sets": {
+    "small_dataset": {
+      "agent_count": 5,
+      "task_count": 10,
+      "workflow_count": 2,
+      "concurrent_users": 3
+    },
+    "medium_dataset": {
+      "agent_count": 20,
+      "task_count": 50,
+      "workflow_count": 10,
+      "concurrent_users": 10
+    },
+    "large_dataset": {
+      "agent_count": 100,
+      "task_count": 500,
+      "workflow_count": 50,
+      "concurrent_users": 50
+    },
+    "stress_dataset": {
+      "agent_count": 500,
+      "task_count": 5000,
+      "workflow_count": 200,
+      "concurrent_users": 200
+    }
+  }
+}

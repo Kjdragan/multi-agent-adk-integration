@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Multi-Agent Research Platform{% endblock %}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <!-- Custom CSS -->
+    <style>
+        body { 
+            background-color: #f8f9fa; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .sidebar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        .sidebar .nav-link {
+            color: rgba(255,255,255,0.8);
+            border-radius: 8px;
+            margin: 2px 0;
+        }
+        .sidebar .nav-link:hover, .sidebar .nav-link.active {
+            background-color: rgba(255,255,255,0.1);
+            color: white;
+        }
+        .main-content {
+            padding: 20px;
+        }
+        .card {
+            border: none;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 10px;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border-radius: 10px;
+        }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        .status-active { background-color: #d4edda; color: #155724; }
+        .status-inactive { background-color: #f8d7da; color: #721c24; }
+        .status-running { background-color: #d1ecf1; color: #0c5460; }
+        .status-completed { background-color: #d4edda; color: #155724; }
+        .status-error { background-color: #f8d7da; color: #721c24; }
+        
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+        
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .task-timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+        .task-timeline::before {
+            content: '';
+            position: absolute;
+            left: 15px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #dee2e6;
+        }
+        .task-timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        .task-timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -19px;
+            top: 5px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #007bff;
+        }
+    </style>
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Connection Status -->
+    <div class="connection-status">
+        <span id="connectionStatus" class="badge bg-secondary">Connecting...</span>
+    </div>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <nav class="col-md-3 col-lg-2 d-md-block sidebar collapse">
+                <div class="position-sticky pt-3">
+                    <div class="text-center mb-4">
+                        <h5><i class="fas fa-robot"></i> Multi-Agent Platform</h5>
+                        <small class="text-white-50">Debug Interface</small>
+                    </div>
+                    
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link" href="#overview" onclick="showDashboard('overview')">
+                                <i class="fas fa-tachometer-alt"></i> Overview
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#agents" onclick="showDashboard('agents')">
+                                <i class="fas fa-users"></i> Agents
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#tasks" onclick="showDashboard('tasks')">
+                                <i class="fas fa-tasks"></i> Tasks & Orchestration
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#performance" onclick="showDashboard('performance')">
+                                <i class="fas fa-chart-line"></i> Performance
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#debug" onclick="showDashboard('debug')">
+                                <i class="fas fa-bug"></i> Debug Console
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#logs" onclick="showDashboard('logs')">
+                                <i class="fas fa-file-alt"></i> Live Logs
+                            </a>
+                        </li>
+                    </ul>
+                    
+                    <hr class="my-3">
+                    
+                    <!-- Quick Actions -->
+                    <div class="mb-3">
+                        <h6 class="text-white-50 mb-2">Quick Actions</h6>
+                        <button class="btn btn-outline-light btn-sm w-100 mb-2" onclick="createAgent()">
+                            <i class="fas fa-plus"></i> Create Agent
+                        </button>
+                        <button class="btn btn-outline-light btn-sm w-100 mb-2" onclick="runTask()">
+                            <i class="fas fa-play"></i> Run Task
+                        </button>
+                        <button class="btn btn-outline-light btn-sm w-100" onclick="exportData()">
+                            <i class="fas fa-download"></i> Export Data
+                        </button>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Main Content -->
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 main-content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- WebSocket Connection -->
+    <script>
+        class WebSocketManager {
+            constructor() {
+                this.ws = null;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                this.reconnectDelay = 1000;
+                this.connect();
+            }
+            
+            connect() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                try {
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        console.log('WebSocket connected');
+                        this.updateConnectionStatus('connected');
+                        this.reconnectAttempts = 0;
+                        
+                        // Subscribe to all channels
+                        this.subscribe('agents');
+                        this.subscribe('tasks');
+                        this.subscribe('performance');
+                        this.subscribe('logs');
+                        this.subscribe('debug');
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        const message = JSON.parse(event.data);
+                        this.handleMessage(message);
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('WebSocket disconnected');
+                        this.updateConnectionStatus('disconnected');
+                        this.scheduleReconnect();
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateConnectionStatus('error');
+                    };
+                    
+                } catch (error) {
+                    console.error('Failed to create WebSocket:', error);
+                    this.updateConnectionStatus('error');
+                    this.scheduleReconnect();
+                }
+            }
+            
+            scheduleReconnect() {
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.reconnectAttempts++;
+                    this.updateConnectionStatus('reconnecting');
+                    setTimeout(() => this.connect(), this.reconnectDelay * this.reconnectAttempts);
+                }
+            }
+            
+            subscribe(channel) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'subscribe',
+                        channel: channel
+                    }));
+                }
+            }
+            
+            handleMessage(message) {
+                // Dispatch events for dashboard updates
+                const event = new CustomEvent('websocket-message', { detail: message });
+                document.dispatchEvent(event);
+                
+                // Handle specific message types
+                if (message.type === 'event') {
+                    this.handleEvent(message.data);
+                }
+            }
+            
+            handleEvent(eventData) {
+                switch (eventData.event_type) {
+                    case 'agent_status_update':
+                        window.updateAgentStatus && window.updateAgentStatus(eventData.payload);
+                        break;
+                    case 'task_progress_update':
+                        window.updateTaskProgress && window.updateTaskProgress(eventData.payload);
+                        break;
+                    case 'performance_metric_update':
+                        window.updatePerformanceMetrics && window.updatePerformanceMetrics(eventData.payload);
+                        break;
+                    case 'log_entry':
+                        window.addLogEntry && window.addLogEntry(eventData.payload);
+                        break;
+                }
+            }
+            
+            updateConnectionStatus(status) {
+                const statusEl = document.getElementById('connectionStatus');
+                const statusMap = {
+                    'connected': { text: 'Connected', class: 'bg-success' },
+                    'disconnected': { text: 'Disconnected', class: 'bg-danger' },
+                    'reconnecting': { text: 'Reconnecting...', class: 'bg-warning' },
+                    'error': { text: 'Connection Error', class: 'bg-danger' }
+                };
+                
+                const config = statusMap[status] || { text: 'Unknown', class: 'bg-secondary' };
+                statusEl.textContent = config.text;
+                statusEl.className = `badge ${config.class}`;
+            }
+        }
+        
+        // Initialize WebSocket connection
+        const wsManager = new WebSocketManager();
+        
+        // Dashboard management
+        let currentDashboard = 'overview';
+        
+        function showDashboard(dashboardName) {
+            // Update navigation
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            document.querySelector(`[href="#${dashboardName}"]`).classList.add('active');
+            
+            // Load dashboard content
+            currentDashboard = dashboardName;
+            loadDashboardContent(dashboardName);
+        }
+        
+        async function loadDashboardContent(dashboardName) {
+            try {
+                const response = await fetch(`/api/v1/dashboards/${dashboardName}`);
+                const data = await response.json();
+                
+                // Update dashboard content
+                const contentContainer = document.getElementById('dashboardContent');
+                if (contentContainer) {
+                    renderDashboard(dashboardName, data, contentContainer);
+                }
+            } catch (error) {
+                console.error(`Failed to load ${dashboardName} dashboard:`, error);
+            }
+        }
+        
+        // Quick actions
+        function createAgent() {
+            // Open agent creation modal
+            console.log('Create agent clicked');
+        }
+        
+        function runTask() {
+            // Open task execution modal
+            console.log('Run task clicked');
+        }
+        
+        function exportData() {
+            // Export current dashboard data
+            console.log('Export data clicked');
+        }
+        
+        // Auto-refresh
+        setInterval(() => {
+            if (currentDashboard) {
+                loadDashboardContent(currentDashboard);
+            }
+        }, 5000);
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            showDashboard('overview');
+        });
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

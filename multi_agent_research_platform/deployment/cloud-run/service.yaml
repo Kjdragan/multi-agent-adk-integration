@@ -1,0 +1,194 @@
+# Google Cloud Run service configuration for Multi-Agent Research Platform
+# This file defines the Cloud Run service specification for production deployment
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: multi-agent-platform
+  annotations:
+    # Cloud Run specific annotations
+    run.googleapis.com/ingress: all
+    run.googleapis.com/execution-environment: gen2
+    run.googleapis.com/cpu-throttling: "false"
+  labels:
+    app: multi-agent-platform
+    environment: production
+    version: v1
+spec:
+  template:
+    metadata:
+      annotations:
+        # Autoscaling configuration
+        autoscaling.knative.dev/maxScale: "50"
+        autoscaling.knative.dev/minScale: "2"
+        autoscaling.knative.dev/target: "10"  # Target concurrent requests per instance
+        
+        # Resource allocation
+        run.googleapis.com/memory: "4Gi"
+        run.googleapis.com/cpu: "4"
+        run.googleapis.com/timeout: "600"  # 10 minutes
+        
+        # VPC and networking
+        run.googleapis.com/vpc-access-connector: "projects/PROJECT_ID/locations/REGION/connectors/default-connector"
+        run.googleapis.com/vpc-access-egress: "private-ranges-only"
+        
+        # Service account for identity and access
+        run.googleapis.com/service-account: "multi-agent-platform@PROJECT_ID.iam.gserviceaccount.com"
+        
+        # Startup probe configuration
+        run.googleapis.com/startup-cpu-boost: "true"
+        
+      labels:
+        app: multi-agent-platform
+        environment: production
+    spec:
+      # Maximum number of concurrent requests per instance
+      containerConcurrency: 10
+      
+      # Request timeout
+      timeoutSeconds: 600
+      
+      containers:
+      - name: multi-agent-platform
+        image: gcr.io/PROJECT_ID/multi-agent-platform:latest
+        
+        ports:
+        - name: http1
+          containerPort: 8080
+        
+        # Environment variables
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PORT
+          value: "8080"
+        - name: GOOGLE_GENAI_USE_VERTEXAI
+          value: "true"
+        - name: MAX_CONCURRENT_TASKS
+          value: "20"
+        - name: MAX_CONCURRENT_AGENTS
+          value: "10"
+        - name: ENABLE_PERFORMANCE_MONITORING
+          value: "true"
+        - name: ENABLE_SECURITY_HEADERS
+          value: "true"
+        - name: ENABLE_RATE_LIMITING
+          value: "true"
+        
+        # Resource limits and requests
+        resources:
+          limits:
+            memory: "4Gi"
+            cpu: "4"
+          requests:
+            memory: "2Gi" 
+            cpu: "2"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            httpHeaders:
+            - name: User-Agent
+              value: "GoogleHC/1.0"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12  # 60 seconds total startup time
+
+  traffic:
+  # Route 100% of traffic to latest revision
+  - percent: 100
+    latestRevision: true
+    tag: "latest"
+  
+  # Optional: Blue-green deployment configuration
+  # - percent: 0
+  #   revisionName: "multi-agent-platform-00001"
+  #   tag: "stable"
+
+---
+# Staging service configuration
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: multi-agent-platform-staging
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/execution-environment: gen2
+  labels:
+    app: multi-agent-platform
+    environment: staging
+spec:
+  template:
+    metadata:
+      annotations:
+        # Reduced resources for staging
+        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "1"
+        run.googleapis.com/memory: "2Gi"
+        run.googleapis.com/cpu: "2"
+        run.googleapis.com/timeout: "300"
+        run.googleapis.com/service-account: "multi-agent-platform@PROJECT_ID.iam.gserviceaccount.com"
+      labels:
+        app: multi-agent-platform
+        environment: staging
+    spec:
+      containerConcurrency: 5
+      containers:
+      - name: multi-agent-platform
+        image: gcr.io/PROJECT_ID/multi-agent-platform:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ENVIRONMENT
+          value: "staging"
+        - name: LOG_LEVEL
+          value: "DEBUG"
+        - name: GOOGLE_GENAI_USE_VERTEXAI
+          value: "true"
+        - name: ENABLE_DEBUG_INTERFACE
+          value: "true"
+        resources:
+          limits:
+            memory: "2Gi"
+            cpu: "2"
+          requests:
+            memory: "1Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+  traffic:
+  - percent: 100
+    latestRevision: true

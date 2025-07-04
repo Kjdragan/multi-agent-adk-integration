@@ -1,0 +1,56 @@
+# Core Google AI and ADK
+google-adk
+google-genai
+google-auth
+
+# Web framework
+fastapi
+uvicorn[standard]
+
+# UI and visualization
+streamlit
+plotly
+pandas
+
+# Configuration and validation
+pydantic
+pydantic-settings
+
+# Environment and utilities
+python-dotenv
+httpx
+aiofiles
+
+# Document processing
+pypdf
+python-docx
+pillow
+
+# Data analysis
+numpy
+scipy
+matplotlib
+
+# Logging and monitoring
+structlog
+rich
+
+# Testing
+pytest
+pytest-asyncio
+pytest-mock
+pytest-cov
+pytest-timeout
+
+# Development tools
+black
+isort
+mypy
+ruff
+pre-commit
+
+# API integrations
+openai
+
+# System utilities
+psutil

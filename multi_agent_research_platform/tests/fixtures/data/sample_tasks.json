@@ -1,0 +1,272 @@
+{
+  "research_tasks": [
+    {
+      "id": "research_001",
+      "title": "Renewable Energy Market Analysis",
+      "description": "Research the current state and future prospects of renewable energy markets globally",
+      "complexity": "medium",
+      "expected_duration_minutes": 15,
+      "required_capabilities": ["research", "analysis"],
+      "context": {
+        "target_audience": "business_executives",
+        "geographic_scope": "global",
+        "time_horizon": "5_years"
+      }
+    },
+    {
+      "id": "research_002", 
+      "title": "AI Ethics Framework Development",
+      "description": "Develop a comprehensive framework for AI ethics in healthcare applications",
+      "complexity": "high",
+      "expected_duration_minutes": 30,
+      "required_capabilities": ["research", "critical_thinking", "synthesis"],
+      "context": {
+        "target_audience": "healthcare_professionals",
+        "domain": "healthcare",
+        "regulatory_considerations": true
+      }
+    },
+    {
+      "id": "research_003",
+      "title": "Climate Change Impact Assessment",
+      "description": "Assess the impact of climate change on agricultural productivity in developing countries",
+      "complexity": "high",
+      "expected_duration_minutes": 25,
+      "required_capabilities": ["research", "analysis", "data_processing"],
+      "context": {
+        "target_audience": "policy_makers",
+        "geographic_scope": "developing_countries",
+        "focus_area": "agriculture"
+      }
+    }
+  ],
+  "writing_tasks": [
+    {
+      "id": "writing_001",
+      "title": "Technical Blog Post",
+      "description": "Write an engaging blog post about quantum computing for a general audience",
+      "complexity": "medium",
+      "expected_duration_minutes": 20,
+      "required_capabilities": ["writing", "technical_communication"],
+      "context": {
+        "target_audience": "general_public",
+        "tone": "engaging_educational",
+        "word_count": 800
+      }
+    },
+    {
+      "id": "writing_002",
+      "title": "Executive Summary",
+      "description": "Create an executive summary for a cybersecurity risk assessment report",
+      "complexity": "medium",
+      "expected_duration_minutes": 15,
+      "required_capabilities": ["writing", "synthesis", "business_communication"],
+      "context": {
+        "target_audience": "c_suite_executives",
+        "tone": "formal_professional",
+        "word_count": 500
+      }
+    }
+  ],
+  "analysis_tasks": [
+    {
+      "id": "analysis_001",
+      "title": "Market Trend Analysis", 
+      "description": "Analyze emerging trends in the electric vehicle market using provided data",
+      "complexity": "medium",
+      "expected_duration_minutes": 18,
+      "required_capabilities": ["analysis", "data_processing"],
+      "context": {
+        "data_sources": ["market_reports", "sales_data", "consumer_surveys"],
+        "analysis_type": "trend_analysis",
+        "time_period": "2020_2024"
+      }
+    },
+    {
+      "id": "analysis_002",
+      "title": "Competitive Intelligence Analysis",
+      "description": "Perform competitive analysis of major players in the cloud computing space",
+      "complexity": "high",
+      "expected_duration_minutes": 25,
+      "required_capabilities": ["analysis", "research", "strategic_thinking"],
+      "context": {
+        "competitors": ["aws", "azure", "gcp", "oracle"],
+        "analysis_dimensions": ["pricing", "features", "market_share", "innovation"],
+        "target_audience": "product_managers"
+      }
+    }
+  ],
+  "synthesis_tasks": [
+    {
+      "id": "synthesis_001",
+      "title": "Multi-Source Information Synthesis",
+      "description": "Synthesize information from multiple research sources about sustainable urban planning",
+      "complexity": "high",
+      "expected_duration_minutes": 30,
+      "required_capabilities": ["synthesis", "critical_thinking", "urban_planning_knowledge"],
+      "context": {
+        "source_types": ["academic_papers", "case_studies", "government_reports"],
+        "synthesis_goal": "best_practices_identification",
+        "target_audience": "urban_planners"
+      }
+    }
+  ],
+  "workflow_tasks": [
+    {
+      "id": "workflow_001",
+      "title": "Content Creation Pipeline",
+      "description": "Execute a complete content creation workflow from research to publication",
+      "complexity": "high",
+      "expected_duration_minutes": 45,
+      "workflow_type": "sequential",
+      "steps": [
+        {
+          "step_id": "research",
+          "description": "Research the topic thoroughly",
+          "required_capabilities": ["research"],
+          "dependencies": []
+        },
+        {
+          "step_id": "outline",
+          "description": "Create detailed content outline",
+          "required_capabilities": ["planning", "writing"],
+          "dependencies": ["research"]
+        },
+        {
+          "step_id": "draft",
+          "description": "Write first draft",
+          "required_capabilities": ["writing"],
+          "dependencies": ["outline"]
+        },
+        {
+          "step_id": "review",
+          "description": "Review and provide feedback",
+          "required_capabilities": ["critical_thinking", "editing"],
+          "dependencies": ["draft"]
+        },
+        {
+          "step_id": "finalize",
+          "description": "Incorporate feedback and finalize",
+          "required_capabilities": ["writing", "editing"],
+          "dependencies": ["review"]
+        }
+      ]
+    },
+    {
+      "id": "workflow_002",
+      "title": "Market Research Project", 
+      "description": "Comprehensive market research project with parallel workstreams",
+      "complexity": "high",
+      "expected_duration_minutes": 60,
+      "workflow_type": "hybrid",
+      "parallel_phases": [
+        {
+          "phase_id": "primary_research",
+          "parallel_tasks": [
+            {
+              "task_id": "customer_interviews",
+              "description": "Conduct customer interview analysis",
+              "required_capabilities": ["research", "customer_insights"]
+            },
+            {
+              "task_id": "competitor_analysis",
+              "description": "Analyze competitor positioning",
+              "required_capabilities": ["analysis", "competitive_intelligence"]
+            },
+            {
+              "task_id": "market_sizing",
+              "description": "Calculate total addressable market",
+              "required_capabilities": ["analysis", "market_research"]
+            }
+          ]
+        }
+      ],
+      "sequential_phases": [
+        {
+          "phase_id": "synthesis",
+          "sequential_tasks": [
+            {
+              "task_id": "data_synthesis",
+              "description": "Synthesize all research findings",
+              "required_capabilities": ["synthesis", "analysis"],
+              "dependencies": ["primary_research"]
+            },
+            {
+              "task_id": "recommendations",
+              "description": "Develop strategic recommendations",
+              "required_capabilities": ["strategic_thinking", "business_analysis"],
+              "dependencies": ["data_synthesis"]
+            },
+            {
+              "task_id": "final_report",
+              "description": "Create comprehensive final report",
+              "required_capabilities": ["writing", "business_communication"],
+              "dependencies": ["recommendations"]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "test_scenarios": {
+    "simple_tasks": {
+      "description": "Simple tasks for basic functionality testing",
+      "tasks": [
+        "What is artificial intelligence?",
+        "Explain renewable energy sources",
+        "List the benefits of exercise",
+        "Describe the water cycle",
+        "What are the main programming languages?"
+      ]
+    },
+    "complex_tasks": {
+      "description": "Complex tasks requiring multiple capabilities",
+      "tasks": [
+        "Analyze the geopolitical implications of climate change on global food security and propose policy recommendations",
+        "Develop a comprehensive business strategy for a startup entering the quantum computing market",
+        "Evaluate the ethical considerations of AI in healthcare and create implementation guidelines",
+        "Design a sustainable urban transportation system for a city of 2 million people",
+        "Create a risk assessment framework for cryptocurrency investments in emerging markets"
+      ]
+    },
+    "collaborative_tasks": {
+      "description": "Tasks requiring multiple agents working together",
+      "tasks": [
+        "Research, analyze, and write a comprehensive report on the future of work in the digital age",
+        "Develop a marketing strategy that includes market research, competitive analysis, and campaign design",
+        "Create an investment thesis that combines financial analysis, market research, and risk assessment",
+        "Design a product launch plan including market research, positioning, and go-to-market strategy",
+        "Evaluate and recommend technology solutions for digital transformation in traditional manufacturing"
+      ]
+    },
+    "edge_cases": {
+      "description": "Edge cases and error scenarios for robustness testing",
+      "tasks": [
+        "",
+        "a",
+        "Write a report that is exactly 50,000 words long about the history of paper clips",
+        "Solve world hunger in the next 5 minutes",
+        "Generate content that violates ethical guidelines",
+        "Task with extremely specific and contradictory requirements that cannot be fulfilled"
+      ]
+    }
+  },
+  "performance_benchmarks": {
+    "response_time_targets": {
+      "simple_task_max_seconds": 5,
+      "medium_task_max_seconds": 15,
+      "complex_task_max_seconds": 30,
+      "workflow_task_max_seconds": 60
+    },
+    "quality_thresholds": {
+      "min_success_rate_percent": 95,
+      "min_user_satisfaction_score": 4.0,
+      "max_error_rate_percent": 5
+    },
+    "scalability_targets": {
+      "max_concurrent_agents": 50,
+      "max_concurrent_tasks": 100,
+      "max_agents_per_workflow": 10
+    }
+  }
+}
