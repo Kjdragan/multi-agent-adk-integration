@@ -8,6 +8,7 @@ from typing import List, Dict, Any
 
 from src.agents import AgentFactory, AgentOrchestrator, AgentRegistry
 from src.agents.base import AgentResult, AgentCapability
+from src.agents.llm_agent import LLMRole
 from src.agents.orchestrator import OrchestrationStrategy, OrchestrationResult
 from src.config.app import AppConfig
 
@@ -19,16 +20,16 @@ class TestAgentOrchestrationWorkflows:
     async def test_research_analysis_workflow(self, agent_factory, agent_orchestrator, test_agent_registry):
         """Test end-to-end research and analysis workflow."""
         # Create research team
-        researcher = await agent_factory.create_llm_agent(
-            role="researcher",
+        researcher = agent_factory.create_llm_agent(
+            role=LLMRole.RESEARCHER,
             name="Research Agent"
         )
-        analyst = await agent_factory.create_llm_agent(
-            role="analyst", 
+        analyst = agent_factory.create_llm_agent(
+            role=LLMRole.ANALYST,
             name="Analysis Agent"
         )
-        writer = await agent_factory.create_llm_agent(
-            role="writer",
+        writer = agent_factory.create_llm_agent(
+            role=LLMRole.COMMUNICATOR,
             name="Writing Agent"
         )
         
@@ -84,17 +85,16 @@ class TestAgentOrchestrationWorkflows:
     async def test_content_creation_pipeline(self, agent_factory, test_agent_registry):
         """Test content creation pipeline with multiple agents."""
         # Create content creation team
-        researcher = await agent_factory.create_llm_agent(role="researcher", name="Content Researcher")
-        writer = await agent_factory.create_llm_agent(role="writer", name="Content Writer")
-        editor = await agent_factory.create_llm_agent(role="critic", name="Content Editor")
+        researcher = agent_factory.create_llm_agent(role=LLMRole.RESEARCHER, name="Content Researcher")
+        writer = agent_factory.create_llm_agent(role=LLMRole.COMMUNICATOR, name="Content Writer")
+        editor = agent_factory.create_llm_agent(role=LLMRole.CRITIC, name="Content Editor")
         
         # Register agents
         for agent in [researcher, writer, editor]:
             test_agent_registry.register_agent(agent)
         
         # Create workflow agent
-        workflow_agent = await agent_factory.create_workflow_agent(
-            workflow_type="sequential",
+        workflow_agent = agent_factory.create_workflow_agent(
             name="Content Pipeline"
         )
         
@@ -171,8 +171,8 @@ class TestAgentOrchestrationWorkflows:
         # Create competing agents
         agents = []
         for i in range(3):
-            agent = await agent_factory.create_llm_agent(
-                role="researcher",
+            agent = agent_factory.create_llm_agent(
+                role=LLMRole.RESEARCHER,
                 name=f"Competitor {i+1}"
             )
             
@@ -209,8 +209,8 @@ class TestAgentOrchestrationWorkflows:
         research_areas = ["technology", "economics", "environment", "policy"]
         
         for area in research_areas:
-            agent = await agent_factory.create_llm_agent(
-                role="researcher",
+            agent = agent_factory.create_llm_agent(
+                role=LLMRole.RESEARCHER,
                 name=f"{area.title()} Specialist"
             )
             
@@ -226,8 +226,8 @@ class TestAgentOrchestrationWorkflows:
             test_agent_registry.register_agent(agent)
         
         # Create synthesizer
-        synthesizer = await agent_factory.create_llm_agent(
-            role="synthesizer",
+        synthesizer = agent_factory.create_llm_agent(
+            role=LLMRole.SYNTHESIZER,
             name="Research Synthesizer"
         )
         
@@ -261,9 +261,9 @@ class TestAgentCollaboration:
     async def test_agent_chain_collaboration(self, agent_factory, test_agent_registry):
         """Test agents passing results to each other in a chain."""
         # Create agent chain: Researcher -> Analyst -> Writer
-        researcher = await agent_factory.create_llm_agent(role="researcher", name="Chain Researcher")
-        analyst = await agent_factory.create_llm_agent(role="analyst", name="Chain Analyst")
-        writer = await agent_factory.create_llm_agent(role="writer", name="Chain Writer")
+        researcher = agent_factory.create_llm_agent(role=LLMRole.RESEARCHER, name="Chain Researcher")
+        analyst = agent_factory.create_llm_agent(role=LLMRole.ANALYST, name="Chain Analyst")
+        writer = agent_factory.create_llm_agent(role=LLMRole.COMMUNICATOR, name="Chain Writer")
         
         for agent in [researcher, analyst, writer]:
             test_agent_registry.register_agent(agent)
@@ -308,8 +308,7 @@ class TestAgentCollaboration:
         writer.execute_task = AsyncMock(side_effect=writer_task)
         
         # Execute chain workflow
-        workflow_agent = await agent_factory.create_workflow_agent(
-            workflow_type="sequential",
+        workflow_agent = agent_factory.create_workflow_agent(
             name="Chain Workflow"
         )
         
@@ -369,8 +368,8 @@ class TestAgentCollaboration:
     async def test_agent_feedback_loop(self, agent_factory, test_agent_registry):
         """Test agents providing feedback to improve results."""
         # Create writer and critic agents
-        writer = await agent_factory.create_llm_agent(role="writer", name="Content Writer")
-        critic = await agent_factory.create_llm_agent(role="critic", name="Content Critic")
+        writer = agent_factory.create_llm_agent(role=LLMRole.COMMUNICATOR, name="Content Writer")
+        critic = agent_factory.create_llm_agent(role=LLMRole.CRITIC, name="Content Critic")
         
         for agent in [writer, critic]:
             test_agent_registry.register_agent(agent)
@@ -467,9 +466,9 @@ class TestErrorHandlingAndRecovery:
     async def test_workflow_with_failing_agent(self, agent_factory, test_agent_registry):
         """Test workflow recovery when one agent fails."""
         # Create agents with one that will fail
-        good_agent = await agent_factory.create_llm_agent(role="researcher", name="Good Agent")
-        failing_agent = await agent_factory.create_llm_agent(role="analyst", name="Failing Agent") 
-        backup_agent = await agent_factory.create_llm_agent(role="analyst", name="Backup Agent")
+        good_agent = agent_factory.create_llm_agent(role=LLMRole.RESEARCHER, name="Good Agent")
+        failing_agent = agent_factory.create_llm_agent(role=LLMRole.ANALYST, name="Failing Agent") 
+        backup_agent = agent_factory.create_llm_agent(role=LLMRole.ANALYST, name="Backup Agent")
         
         for agent in [good_agent, failing_agent, backup_agent]:
             test_agent_registry.register_agent(agent)
@@ -515,8 +514,7 @@ class TestErrorHandlingAndRecovery:
     @pytest.mark.asyncio
     async def test_partial_workflow_recovery(self, agent_factory):
         """Test workflow that can partially recover from failures."""
-        workflow_agent = await agent_factory.create_workflow_agent(
-            workflow_type="resilient",
+        workflow_agent = agent_factory.create_workflow_agent(
             name="Resilient Workflow"
         )
         
@@ -597,8 +595,8 @@ class TestPerformanceUnderLoad:
         # Create pool of agents
         agents = []
         for i in range(5):
-            agent = await agent_factory.create_llm_agent(
-                role="researcher",
+            agent = agent_factory.create_llm_agent(
+                role=LLMRole.RESEARCHER,
                 name=f"Concurrent Agent {i}"
             )
             
@@ -640,8 +638,7 @@ class TestPerformanceUnderLoad:
     @pytest.mark.asyncio
     async def test_workflow_scalability(self, agent_factory):
         """Test workflow scalability with increasing step counts."""
-        workflow_agent = await agent_factory.create_workflow_agent(
-            workflow_type="parallel",
+        workflow_agent = agent_factory.create_workflow_agent(
             name="Scalability Test Workflow"
         )
         
@@ -690,8 +687,8 @@ class TestRealAPIIntegration:
     @pytest.mark.asyncio
     async def test_real_llm_agent_execution(self, agent_factory):
         """Test LLM agent with real API calls."""
-        agent = await agent_factory.create_llm_agent(
-            role="researcher",
+        agent = agent_factory.create_llm_agent(
+            role=LLMRole.RESEARCHER,
             name="Real API Test Agent"
         )
         
@@ -708,8 +705,8 @@ class TestRealAPIIntegration:
     async def test_real_orchestration_workflow(self, agent_factory, agent_orchestrator, test_agent_registry):
         """Test orchestration with real agents."""
         # Create minimal agent team
-        agent = await agent_factory.create_llm_agent(
-            role="researcher",
+        agent = agent_factory.create_llm_agent(
+            role=LLMRole.RESEARCHER,
             name="Real Orchestration Agent"
         )
         

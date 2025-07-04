@@ -37,7 +37,7 @@ class MonitoringProvider(str, Enum):
 
 class CloudRunConfig(BaseModel):
     """Google Cloud Run specific configuration."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Basic service settings
     service_name: str = Field(
@@ -136,7 +136,7 @@ class CloudRunConfig(BaseModel):
 
 class DatabaseConfig(BaseModel):
     """Database configuration for production deployments."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Database type
     database_type: DatabaseType = Field(
@@ -242,7 +242,7 @@ class DatabaseConfig(BaseModel):
 
 class MonitoringConfig(BaseModel):
     """Monitoring and observability configuration."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Monitoring provider
     provider: MonitoringProvider = Field(
@@ -327,7 +327,7 @@ class MonitoringConfig(BaseModel):
 
 class SecurityConfig(BaseModel):
     """Security configuration for deployment."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Authentication
     enable_authentication: bool = Field(

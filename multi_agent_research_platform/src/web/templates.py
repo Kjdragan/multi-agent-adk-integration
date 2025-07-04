@@ -46,7 +46,6 @@ class TemplateRenderer:
     def _setup_template_filters(self):
         """Setup custom Jinja2 filters and functions."""
         
-        @self.env.filter('datetime')
         def datetime_filter(timestamp):
             """Format timestamp as datetime string."""
             import datetime
@@ -55,7 +54,6 @@ class TemplateRenderer:
                 return dt.strftime('%Y-%m-%d %H:%M:%S')
             return str(timestamp)
         
-        @self.env.filter('duration')
         def duration_filter(seconds):
             """Format seconds as human-readable duration."""
             if not isinstance(seconds, (int, float)):
@@ -72,7 +70,6 @@ class TemplateRenderer:
             else:
                 return f"{secs}s"
         
-        @self.env.filter('filesize')
         def filesize_filter(bytes_size):
             """Format bytes as human-readable file size."""
             if not isinstance(bytes_size, (int, float)):
@@ -84,14 +81,12 @@ class TemplateRenderer:
                 bytes_size /= 1024.0
             return f"{bytes_size:.1f} PB"
         
-        @self.env.filter('percentage')
         def percentage_filter(value, decimals=1):
             """Format value as percentage."""
             if not isinstance(value, (int, float)):
                 return "N/A"
             return f"{value:.{decimals}f}%"
         
-        @self.env.global_()
         def get_status_class(status):
             """Get CSS class for status badge."""
             status_map = {
@@ -106,7 +101,6 @@ class TemplateRenderer:
             }
             return status_map.get(str(status).lower(), 'status-inactive')
         
-        @self.env.global_()
         def get_agent_type_icon(agent_type):
             """Get Font Awesome icon for agent type."""
             icon_map = {
@@ -121,7 +115,6 @@ class TemplateRenderer:
             }
             return icon_map.get(str(agent_type).lower(), 'fas fa-robot')
         
-        @self.env.global_()
         def get_capability_icon(capability):
             """Get Font Awesome icon for capability."""
             icon_map = {
@@ -139,6 +132,15 @@ class TemplateRenderer:
                 'entity_extraction': 'fas fa-extract',
             }
             return icon_map.get(str(capability).lower(), 'fas fa-star')
+        
+        # Register filters and globals with the environment
+        self.env.filters['datetime'] = datetime_filter
+        self.env.filters['duration'] = duration_filter
+        self.env.filters['filesize'] = filesize_filter
+        self.env.filters['percentage'] = percentage_filter
+        self.env.globals['get_status_class'] = get_status_class
+        self.env.globals['get_agent_type_icon'] = get_agent_type_icon
+        self.env.globals['get_capability_icon'] = get_capability_icon
     
     def render_template(self, template_name: str, context: Optional[Dict[str, Any]] = None) -> str:
         """

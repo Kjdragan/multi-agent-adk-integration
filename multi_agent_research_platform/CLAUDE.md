@@ -17,29 +17,29 @@ cp .env.template .env
 ### Running the Application
 ```bash
 # ADK Web Interface (debugging/development)
-uv run python main.py
+uv run --isolated python src/web/launcher.py
 
 # Streamlit Interface (production UX)
-uv run streamlit run streamlit_app.py
+uv run --isolated python src/streamlit/launcher.py
 
 # Both interfaces simultaneously
-uv run python main.py &
-uv run streamlit run streamlit_app.py
+uv run --isolated python src/web/launcher.py &
+uv run --isolated python src/streamlit/launcher.py
 ```
 
 ### Testing
 ```bash
 # Recommended: Use test runner (auto-handles PYTHONPATH)
-uv run python run_tests.py unit              # Unit tests
-uv run python run_tests.py integration       # Integration tests
-uv run python run_tests.py all              # All tests
-uv run python run_tests.py coverage         # With coverage
+uv run --isolated python run_tests.py unit              # Unit tests
+uv run --isolated python run_tests.py integration       # Integration tests
+uv run --isolated python run_tests.py all              # All tests
+uv run --isolated python run_tests.py coverage         # With coverage
 
 # Direct pytest (requires manual PYTHONPATH)
-PYTHONPATH=. uv run pytest tests/unit/test_agents.py::TestLLMAgent::test_llm_agent_creation -v
+PYTHONPATH=. uv run --isolated pytest tests/unit/test_agents.py::TestLLMAgent::test_llm_agent_creation -v
 
 # Single test verification (useful for debugging)
-PYTHONPATH=. uv run pytest tests/integration/test_gemini_integration.py -v
+PYTHONPATH=. uv run --isolated pytest tests/integration/test_gemini_integration.py -v
 ```
 
 ### Code Quality
@@ -206,8 +206,8 @@ result = await orchestrator.orchestrate_task(
 - `src/context/`: ADK context management patterns and helpers
 
 **Key Entry Points:**
-- `main.py`: ADK Web Interface launcher
-- `streamlit_app.py`: Streamlit production interface
+- `src/web/launcher.py`: ADK Web Interface launcher
+- `src/streamlit/launcher.py`: Streamlit production interface
 - `src/agents/factory.py`: Primary agent creation interface
 - `src/agents/orchestrator.py`: Multi-agent coordination engine
 - `run_tests.py`: Test execution with automatic PYTHONPATH handling
@@ -1052,4 +1052,113 @@ with open(f"logs/runs/{latest_run}/debug.log") as f:
     debug_logs = f.read()
 ```
 
-This comprehensive documentation provides the deep architectural understanding, practical patterns, migration insights, and development workflows that would enable a fresh Claude instance to quickly become productive with this sophisticated multi-agent platform.
+## Critical Fixes Applied During Development
+
+### Virtual Environment Management
+**Issue**: VIRTUAL_ENV conflicts between IDE and uv
+**Solution**: Always use `uv run --isolated` to avoid conflicts
+```bash
+# FIXED: Use isolated execution
+uv run --isolated python src/web/launcher.py
+
+# PROBLEMATIC: IDE environment conflicts  
+uv run python src/web/launcher.py
+```
+
+### Directory Structure Cleanup
+**Issue**: Duplicate nested directories causing import confusion
+**Solution**: Maintain single `src/` structure, remove duplicates
+```bash
+# FIXED: Clean structure
+src/platform_logging/  # Correct location
+src/agents/           # Correct location
+
+# REMOVED: Duplicated nested structure
+multi_agent_research_platform/multi_agent_research_platform/  # Deleted
+```
+
+### Pydantic Configuration
+**Issue**: `extra="forbid"` rejecting environment variables
+**Solution**: Use `extra="ignore"` in all config models
+```python
+# FIXED: Accept unknown env vars
+class BaseConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+# BROKEN: Rejects .env variables
+class BaseConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+```
+
+### Service Lifecycle Management
+**Issue**: Services using `initialize()` instead of `start()`
+**Solution**: Use correct ADK v1.5.0 service lifecycle methods
+```python
+# FIXED: Correct ADK pattern
+await service.start()  # Initializes and starts health monitoring
+await service.stop()   # Graceful shutdown
+
+# BROKEN: Legacy pattern
+await service.initialize()  # Method doesn't exist in v1.5.0
+```
+
+### FastAPI Integration
+**Issue**: `get_fast_api_app()` removed in ADK v1.5.0
+**Solution**: Create custom FastAPI application
+```python
+# FIXED: Custom FastAPI app
+from fastapi import FastAPI
+app = FastAPI(
+    title="Multi-Agent Research Platform",
+    version="1.0.0"
+)
+
+# BROKEN: Removed function
+app = get_fast_api_app()  # No longer exists
+```
+
+### Jinja2 Template Filters
+**Issue**: Decorator syntax causing AttributeError
+**Solution**: Manual filter registration
+```python
+# FIXED: Manual registration
+def datetime_filter(timestamp): ...
+env.filters['datetime'] = datetime_filter
+
+# BROKEN: Decorator syntax
+@env.filter('datetime')  # Causes AttributeError in newer Jinja2
+def datetime_filter(timestamp): ...
+```
+
+### Abstract Service Implementation
+**Issue**: Missing required abstract methods in service implementations
+**Solution**: Implement all required abstract methods
+```python
+# FIXED: Complete implementation
+class LocalFileArtifactService(ArtifactService):
+    async def list_artifact_keys(self) -> List[str]:
+        return await self.list_artifacts()
+    
+    async def list_versions(self, filename: str) -> List[int]:
+        # Implementation here
+        pass
+
+# BROKEN: Missing abstract methods
+class LocalFileArtifactService(ArtifactService):
+    # Missing list_artifact_keys and list_versions
+    pass
+```
+
+### Logger Compatibility
+**Issue**: Mixing PlatformLogger and RunLogger interfaces
+**Solution**: Use correct logger type for each context
+```python
+# FIXED: Use standard logger for simple logging
+self.logger = logging.getLogger("web_app")
+self.logger.error("Failed to start")
+
+# BROKEN: Wrong logger interface
+platform_logger.error("Failed to start")  # PlatformLogger has no error method
+```
+
+This comprehensive documentation captures all critical knowledge from our debugging session, ensuring future Claude instances can be immediately productive without encountering the same issues.

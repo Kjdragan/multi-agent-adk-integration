@@ -210,11 +210,11 @@ class StreamlitApp:
                 "description": "Complete research team with researcher, analyst, and writer"
             },
             "Analysis Team": {
-                "suite": AgentSuite.ANALYSIS_TEAM, 
+                "suite": AgentSuite.DATA_ANALYSIS, 
                 "description": "Data analysis focused team with analysts and processors"
             },
             "Content Team": {
-                "suite": AgentSuite.CONTENT_TEAM,
+                "suite": AgentSuite.CONTENT_CREATION,
                 "description": "Content creation team with writers and editors"
             },
             "Custom Setup": {

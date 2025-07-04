@@ -127,7 +127,7 @@ def create_services(config: ServicesConfig,
     return services
 
 
-def create_development_services(logger: Optional[RunLogger] = None) -> Dict[str, any]:
+def create_development_services(logger=None) -> Dict[str, any]:
     """
     Create services optimized for development.
     
@@ -135,6 +135,11 @@ def create_development_services(logger: Optional[RunLogger] = None) -> Dict[str,
     """
     config = ServicesConfig()
     config.configure_for_environment("development")
+    
+    # Convert PlatformLogger to RunLogger if needed
+    if logger and not hasattr(logger, 'debug'):
+        # This is a PlatformLogger, we need to pass None instead
+        logger = None
     
     return create_services(config, logger)
 

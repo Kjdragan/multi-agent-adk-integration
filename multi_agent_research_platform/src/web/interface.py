@@ -178,8 +178,15 @@ class WebInterface:
             if self.logger:
                 self.logger.info(f"Starting web interface on {self.web_config.host}:{self.web_config.port}")
             
-            # Get FastAPI app from ADK
-            self.app = get_fast_api_app()
+            # Create FastAPI app (ADK v1.5.0 no longer provides get_fast_api_app)
+            from fastapi import FastAPI
+            self.app = FastAPI(
+                title="Multi-Agent Research Platform",
+                description="Advanced multi-agent research platform built with Google ADK",
+                version="1.0.0",
+                docs_url="/docs" if self.web_config.debug else None,
+                redoc_url="/redoc" if self.web_config.debug else None,
+            )
             
             # Configure CORS if enabled
             if self.web_config.enable_cors:

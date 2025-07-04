@@ -135,8 +135,9 @@ class AgentFactory:
         
         if self.logger:
             model_info = model.value if model else "auto-selected"
+            role_value = role.value if hasattr(role, 'value') else str(role)
             self.logger.info(
-                f"Created LLM agent: {agent.name} (role: {role.value}, model: {model_info}, "
+                f"Created LLM agent: {agent.name} (role: {role_value}, model: {model_info}, "
                 f"thinking: {enable_thinking}, structured: {enable_structured_output})"
             )
         

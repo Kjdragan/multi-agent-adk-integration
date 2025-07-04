@@ -36,7 +36,7 @@ class ModelProvider(str, Enum):
 
 class AgentConfig(BaseModel):
     """Base configuration for all agents."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Basic identification
     name: str = Field(description="Unique agent name")

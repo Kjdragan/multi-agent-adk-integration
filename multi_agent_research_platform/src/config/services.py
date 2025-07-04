@@ -46,7 +46,7 @@ class ArtifactServiceType(str, Enum):
 
 class SessionServiceConfig(BaseModel):
     """Configuration for session management service."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Service type
     service_type: SessionServiceType = Field(
@@ -142,7 +142,7 @@ class SessionServiceConfig(BaseModel):
 
 class MemoryServiceConfig(BaseModel):
     """Configuration for memory/knowledge management service."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Service type
     service_type: MemoryServiceType = Field(
@@ -257,7 +257,7 @@ class MemoryServiceConfig(BaseModel):
 
 class ArtifactServiceConfig(BaseModel):
     """Configuration for artifact storage service."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Service type
     service_type: ArtifactServiceType = Field(

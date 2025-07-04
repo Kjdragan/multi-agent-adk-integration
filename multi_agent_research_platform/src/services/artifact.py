@@ -297,6 +297,17 @@ class InMemoryArtifactService(ArtifactService):
                     return True
                 
                 return False
+    
+    async def list_artifact_keys(self) -> List[str]:
+        """List all artifact keys (filenames)."""
+        return await self.list_artifacts()
+    
+    async def list_versions(self, filename: str) -> List[int]:
+        """List all versions for a specific artifact."""
+        with self._cache_lock:
+            if filename not in self._storage:
+                return []
+            return sorted(self._storage[filename].keys())
 
 
 class LocalFileArtifactService(ArtifactService):
@@ -569,6 +580,19 @@ class LocalFileArtifactService(ArtifactService):
                               (f" version {version}" if version else " (all versions)"))
             
             return deleted
+    
+    async def list_artifact_keys(self) -> List[str]:
+        """List all artifact keys (filenames)."""
+        return await self.list_artifacts()
+    
+    async def list_versions(self, filename: str) -> List[int]:
+        """List all versions for a specific artifact."""
+        with self._db_lock:
+            cursor = self._connection.cursor()
+            cursor.execute("""
+                SELECT version FROM artifacts WHERE filename = ? ORDER BY version
+            """, (filename,))
+            return [row['version'] for row in cursor.fetchall()]
 
 
 class GCSArtifactService(ArtifactService):

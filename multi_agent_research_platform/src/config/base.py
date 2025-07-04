@@ -30,7 +30,7 @@ class BaseConfig(BaseSettings):
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         case_sensitive=False,
-        extra="forbid",
+        extra="ignore",
         validate_assignment=True,
     )
     
@@ -53,7 +53,7 @@ class BaseConfig(BaseSettings):
 
 class DatabaseSettings(BaseModel):
     """Database connection settings."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     url: str = Field(description="Database connection URL")
     echo: bool = Field(default=False, description="Enable SQL logging")
@@ -65,7 +65,7 @@ class DatabaseSettings(BaseModel):
 
 class RedisSettings(BaseModel):
     """Redis connection settings."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     url: str = Field(description="Redis connection URL")
     decode_responses: bool = Field(default=True, description="Decode responses to strings")
@@ -80,7 +80,7 @@ class RedisSettings(BaseModel):
 
 class APIKeySettings(BaseModel):
     """API key configuration."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Google/Gemini APIs
     google_api_key: Optional[str] = Field(default=None, description="Google API key")
@@ -112,7 +112,7 @@ class APIKeySettings(BaseModel):
 
 class SecuritySettings(BaseModel):
     """Security configuration."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     secret_key: str = Field(description="Secret key for session management")
     enable_auth: bool = Field(default=False, description="Enable authentication")
@@ -133,7 +133,7 @@ class SecuritySettings(BaseModel):
 
 class FeatureFlags(BaseModel):
     """Feature flag configuration."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Interface features
     enable_web_interface: bool = Field(default=True, description="Enable ADK web interface")

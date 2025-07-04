@@ -48,7 +48,7 @@ class AuthenticationType(str, Enum):
 
 class ToolConfig(BaseModel):
     """Base configuration for all tools."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Basic identification
     name: str = Field(description="Unique tool name")
@@ -164,7 +164,7 @@ class ADKBuiltInToolsConfig(BaseConfig):
 
 class AuthenticationConfig(BaseModel):
     """Authentication configuration for external services."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     auth_type: AuthenticationType = Field(description="Authentication type")
     
@@ -208,7 +208,7 @@ class AuthenticationConfig(BaseModel):
 
 class MCPServerConfig(BaseModel):
     """Configuration for MCP (Model Context Protocol) servers."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     
     # Server identification
     name: str = Field(description="MCP server name")

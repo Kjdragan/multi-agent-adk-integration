@@ -42,8 +42,7 @@ class MultiAgentWebApp:
             retention_days=30
         )
         
-        platform_logger = setup_logging(log_config)
-        self.platform_logger = platform_logger
+        self.platform_logger = setup_logging(log_config)
         
         # Create a simple logger for web app messages  
         import logging
@@ -52,7 +51,7 @@ class MultiAgentWebApp:
         
         # Initialize services using factory
         from ..services.factory import create_development_services
-        services = create_development_services(platform_logger)
+        services = create_development_services()
         self.session_service = services['session']
         self.memory_service = services['memory']
         self.artifact_service = services['artifact']
@@ -112,17 +111,17 @@ class MultiAgentWebApp:
     async def _initialize_services(self):
         """Initialize core services."""
         try:
-            # Initialize session service
-            await self.session_service.initialize()
-            self.logger.debug("Session service initialized")
+            # Start session service
+            await self.session_service.start()
+            self.logger.debug("Session service started")
             
-            # Initialize memory service
-            await self.memory_service.initialize()
-            self.logger.debug("Memory service initialized")
+            # Start memory service
+            await self.memory_service.start()
+            self.logger.debug("Memory service started")
             
-            # Initialize artifact service
-            await self.artifact_service.initialize()
-            self.logger.debug("Artifact service initialized")
+            # Start artifact service
+            await self.artifact_service.start()
+            self.logger.debug("Artifact service started")
             
         except Exception as e:
             self.logger.error(f"Failed to initialize services: {e}")
