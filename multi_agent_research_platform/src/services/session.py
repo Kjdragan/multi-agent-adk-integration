@@ -5,6 +5,8 @@ Session service implementations for managing ADK sessions, state, and events.
 import json
 import sqlite3
 import threading
+import asyncio
+import aiosqlite
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -31,7 +33,13 @@ class SessionService(BaseService, BaseSessionService, ABC):
         BaseService.__init__(self, name, config.model_dump())
         self.config = config
         self._sessions_cache: Dict[str, Session] = {}
-        self._cache_lock = threading.RLock()
+        self._cache_lock = asyncio.Lock()  # Use asyncio.Lock for async contexts
+        self._cache_stats = {
+            "hits": 0,
+            "misses": 0,
+            "invalidations": 0,
+            "size": 0
+        }
     
     async def _start_impl(self) -> None:
         """Initialize the session service."""
@@ -194,6 +202,49 @@ class SessionService(BaseService, BaseSessionService, ABC):
             signals["skip_summarization"] = True
         
         return signals
+    
+    def _invalidate_cache_entry(self, session_id: str) -> None:
+        """Invalidate a specific cache entry."""
+        if session_id in self._sessions_cache:
+            del self._sessions_cache[session_id]
+            self._cache_stats["invalidations"] += 1
+            self._cache_stats["size"] = len(self._sessions_cache)
+    
+    async def _update_cache(self, session_id: str, session: Session) -> None:
+        """Update cache with consistency checks."""
+        # Limit cache size to prevent memory issues
+        max_cache_size = 1000
+        if len(self._sessions_cache) >= max_cache_size:
+            # Remove oldest entries (simple LRU approximation)
+            oldest_keys = list(self._sessions_cache.keys())[:100]
+            for key in oldest_keys:
+                del self._sessions_cache[key]
+        
+        self._sessions_cache[session_id] = session
+        self._cache_stats["size"] = len(self._sessions_cache)
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics."""
+        total_requests = self._cache_stats["hits"] + self._cache_stats["misses"]
+        hit_rate = self._cache_stats["hits"] / total_requests if total_requests > 0 else 0.0
+        
+        return {
+            "cache_size": self._cache_stats["size"],
+            "cache_hits": self._cache_stats["hits"],
+            "cache_misses": self._cache_stats["misses"],
+            "cache_invalidations": self._cache_stats["invalidations"],
+            "hit_rate": hit_rate,
+            "total_requests": total_requests
+        }
+    
+    async def clear_cache(self) -> int:
+        """Clear session cache and return number of entries cleared."""
+        async with self._cache_lock:
+            count = len(self._sessions_cache)
+            self._sessions_cache.clear()
+            self._cache_stats["size"] = 0
+            self._cache_stats["invalidations"] += count
+            return count
 
 
 class InMemorySessionService(SessionService):
@@ -228,7 +279,7 @@ class InMemorySessionService(SessionService):
     async def create_session(self, app_name: str, user_id: str, session_id: str,
                            state: Optional[Dict[str, Any]] = None) -> Session:
         """Create a new session."""
-        with self._cache_lock:
+        async with self._cache_lock:
             # Initialize app storage if needed
             if app_name not in self._storage:
                 self._storage[app_name] = {}
@@ -247,20 +298,42 @@ class InMemorySessionService(SessionService):
             # Store session
             self._storage[app_name][f"{user_id}:{session_id}"] = session
             self._sessions_cache[session_id] = session
+            self._cache_stats["size"] = len(self._sessions_cache)
             
             self._log_debug(f"Created session {session_id} for user {user_id}")
             return session
     
     async def get_session(self, app_name: str, user_id: str, session_id: str) -> Optional[Session]:
         """Get an existing session."""
-        with self._cache_lock:
+        async with self._cache_lock:
+            # Check cache first
+            if session_id in self._sessions_cache:
+                session = self._sessions_cache[session_id]
+                # Verify cache consistency
+                session_key = f"{user_id}:{session_id}"
+                app_sessions = self._storage.get(app_name, {})
+                if session_key in app_sessions and app_sessions[session_key] is session:
+                    self._cache_stats["hits"] += 1
+                    return session
+                else:
+                    # Cache inconsistency - invalidate and reload
+                    self._invalidate_cache_entry(session_id)
+            
+            # Cache miss - load from storage
             session_key = f"{user_id}:{session_id}"
             app_sessions = self._storage.get(app_name, {})
-            return app_sessions.get(session_key)
+            session = app_sessions.get(session_key)
+            
+            if session:
+                self._sessions_cache[session_id] = session
+                self._cache_stats["size"] = len(self._sessions_cache)
+            
+            self._cache_stats["misses"] += 1
+            return session
     
     async def append_event(self, session: Session, event: Event) -> None:
         """Append an event to the session."""
-        with self._cache_lock:
+        async with self._cache_lock:
             # Add event to session
             session.events.append(event)
             session.last_update_time = datetime.utcnow()
@@ -283,7 +356,7 @@ class InMemorySessionService(SessionService):
     
     async def update_session_state(self, session: Session, state_delta: Dict[str, Any]) -> None:
         """Update session state."""
-        with self._cache_lock:
+        async with self._cache_lock:
             for key, value in state_delta.items():
                 old_value = session.state.get(key)
                 session.state[key] = value
@@ -295,13 +368,13 @@ class InMemorySessionService(SessionService):
     
     async def delete_session(self, app_name: str, user_id: str, session_id: str) -> bool:
         """Delete a session."""
-        with self._cache_lock:
+        async with self._cache_lock:
             session_key = f"{user_id}:{session_id}"
             app_sessions = self._storage.get(app_name, {})
             
             if session_key in app_sessions:
                 del app_sessions[session_key]
-                self._sessions_cache.pop(session_id, None)
+                self._invalidate_cache_entry(session_id)
                 self._log_debug(f"Deleted session {session_id}")
                 return True
             
@@ -309,7 +382,7 @@ class InMemorySessionService(SessionService):
     
     async def list_sessions(self, app_name: str, user_id: Optional[str] = None) -> List[Session]:
         """List sessions for an app/user."""
-        with self._cache_lock:
+        async with self._cache_lock:
             app_sessions = self._storage.get(app_name, {})
             
             if user_id:
@@ -332,25 +405,96 @@ class DatabaseSessionService(SessionService):
     
     def __init__(self, config: SessionServiceConfig):
         super().__init__("database_session", config)
-        self._connection: Optional[sqlite3.Connection] = None
-        self._db_lock = threading.RLock()
+        self._connection: Optional[aiosqlite.Connection] = None
+        self._db_lock = asyncio.Lock()  # Use asyncio.Lock for async database operations
+        self._connection_pool = []  # Simple connection pool
+        self._max_pool_size = 5
+        self._db_path: Optional[Path] = None
+        self._connection_retry_count = 0
+        self._max_retries = 3
     
     async def _initialize_storage(self) -> None:
-        """Initialize database storage."""
+        """Initialize database storage with connection pooling."""
         # For now, use SQLite for simplicity
         # In production, this would connect to PostgreSQL/Cloud SQL
-        db_path = Path("data/sessions.db")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = Path("data/sessions.db")
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        self._connection = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
+        # Initialize connection pool
+        await self._init_connection_pool()
         
-        # Create tables
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        # Get a connection to set up tables
+        connection = await self._get_connection()
+        try:
+            await self._setup_database_schema(connection)
+        finally:
+            await self._return_connection(connection)
+    
+    async def _init_connection_pool(self) -> None:
+        """Initialize database connection pool."""
+        for _ in range(self._max_pool_size):
+            try:
+                connection = await aiosqlite.connect(str(self._db_path))
+                connection.row_factory = aiosqlite.Row
+                # Enable WAL mode for better concurrency
+                await connection.execute("PRAGMA journal_mode=WAL")
+                await connection.execute("PRAGMA synchronous=NORMAL")
+                await connection.execute("PRAGMA cache_size=1000")
+                await connection.execute("PRAGMA foreign_keys=ON")
+                self._connection_pool.append(connection)
+            except Exception as e:
+                self._log_error(f"Failed to create database connection: {e}")
+                break
+    
+    async def _get_connection(self) -> aiosqlite.Connection:
+        """Get a connection from the pool with auto-reconnection."""
+        for attempt in range(self._max_retries):
+            try:
+                async with self._db_lock:
+                    if self._connection_pool:
+                        connection = self._connection_pool.pop()
+                        # Test if connection is still valid
+                        await connection.execute("SELECT 1")
+                        return connection
+                    else:
+                        # Pool is empty, create new connection
+                        connection = await aiosqlite.connect(str(self._db_path))
+                        connection.row_factory = aiosqlite.Row
+                        await connection.execute("PRAGMA journal_mode=WAL")
+                        await connection.execute("PRAGMA foreign_keys=ON")
+                        return connection
+            except Exception as e:
+                self._log_warning(f"Database connection attempt {attempt + 1} failed: {e}")
+                if attempt == self._max_retries - 1:
+                    raise
+                await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff
+        
+        raise Exception("Failed to get database connection after retries")
+    
+    async def _return_connection(self, connection: aiosqlite.Connection) -> None:
+        """Return connection to pool or close if pool is full."""
+        try:
+            async with self._db_lock:
+                if len(self._connection_pool) < self._max_pool_size:
+                    self._connection_pool.append(connection)
+                else:
+                    await connection.close()
+        except Exception:
+            # If returning fails, just close it
+            try:
+                await connection.close()
+            except Exception:
+                pass
+    
+    async def _setup_database_schema(self, connection: aiosqlite.Connection) -> None:
+        """Set up database schema with proper indexing."""
+        
+        # Create tables with transaction management
+        try:
+            cursor = await connection.cursor()
             
             # Sessions table
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     app_name TEXT NOT NULL,
                     user_id TEXT NOT NULL,
@@ -363,7 +507,7 @@ class DatabaseSessionService(SessionService):
             """)
             
             # Events table
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS session_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     app_name TEXT NOT NULL,
@@ -375,22 +519,57 @@ class DatabaseSessionService(SessionService):
             """)
             
             # Indexes for better performance
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_sessions_user 
                 ON sessions (app_name, user_id)
             """)
             
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_events_session 
                 ON session_events (app_name, session_id)
             """)
             
-            self._connection.commit()
+            # Commit transaction
+            await connection.commit()
+            
+        except Exception as e:
+            # Rollback on error
+            try:
+                await connection.rollback()
+            except Exception:
+                pass  # Connection might be closed
+            self._log_error(f"Failed to set up database schema: {e}")
+            raise
+    
+    async def _execute_with_transaction(self, operation):
+        """Execute database operation with proper transaction management."""
+        connection = await self._get_connection()
+        try:
+            # Start transaction
+            await connection.execute("BEGIN")
+            
+            # Execute operation
+            result = await operation(connection)
+            
+            # Commit if successful
+            await connection.commit()
+            return result
+            
+        except Exception as e:
+            # Rollback on error
+            try:
+                await connection.rollback()
+            except Exception:
+                pass  # Connection might be closed
+            self._log_error(f"Database operation failed: {e}")
+            raise
+        finally:
+            await self._return_connection(connection)
     
     async def _cleanup_storage(self) -> None:
         """Close database connection."""
         if self._connection:
-            self._connection.close()
+            await self._connection.close()
             self._connection = None
     
     async def _cleanup_test_session(self, session: Session) -> None:
@@ -400,19 +579,19 @@ class DatabaseSessionService(SessionService):
     async def create_session(self, app_name: str, user_id: str, session_id: str,
                            state: Optional[Dict[str, Any]] = None) -> Session:
         """Create a new session in database."""
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             
             state_json = json.dumps(state or {})
             now = datetime.utcnow()
             
-            cursor.execute("""
+            await cursor.execute("""
                 INSERT OR REPLACE INTO sessions 
                 (app_name, user_id, session_id, state, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (app_name, user_id, session_id, state_json, now, now))
             
-            self._connection.commit()
+            await self._connection.commit()
             
             # Create session object
             session = Session(
@@ -427,24 +606,35 @@ class DatabaseSessionService(SessionService):
             # Load existing events
             await self._load_session_events(session)
             
-            self._sessions_cache[session_id] = session
+            # Cache with consistency check
+            await self._update_cache(session_id, session)
             return session
     
     async def get_session(self, app_name: str, user_id: str, session_id: str) -> Optional[Session]:
         """Get session from database."""
-        # Check cache first
-        if session_id in self._sessions_cache:
-            return self._sessions_cache[session_id]
+        # Check cache first with consistency verification
+        async with self._cache_lock:
+            if session_id in self._sessions_cache:
+                cached_session = self._sessions_cache[session_id]
+                # Verify cache entry is for the correct app/user
+                if (cached_session.app_name == app_name and 
+                    cached_session.user_id == user_id):
+                    self._cache_stats["hits"] += 1
+                    return cached_session
+                else:
+                    # Cache inconsistency - invalidate
+                    self._invalidate_cache_entry(session_id)
         
-        with self._db_lock:
-            cursor = self._connection.cursor()
-            cursor.execute("""
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
+            await cursor.execute("""
                 SELECT * FROM sessions 
                 WHERE app_name = ? AND user_id = ? AND session_id = ?
             """, (app_name, user_id, session_id))
             
-            row = cursor.fetchone()
+            row = await cursor.fetchone()
             if not row:
+                self._cache_stats["misses"] += 1
                 return None
             
             # Create session object
@@ -461,13 +651,14 @@ class DatabaseSessionService(SessionService):
             # Load events
             await self._load_session_events(session)
             
-            self._sessions_cache[session_id] = session
+            # Cache with consistency check
+            await self._update_cache(session_id, session)
             return session
     
     async def append_event(self, session: Session, event: Event) -> None:
         """Append event to session in database."""
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             
             # Serialize event
             event_data = {
@@ -480,7 +671,7 @@ class DatabaseSessionService(SessionService):
             }
             
             # Insert event
-            cursor.execute("""
+            await cursor.execute("""
                 INSERT INTO session_events (app_name, session_id, event_data)
                 VALUES (?, ?, ?)
             """, (session.app_name, session.id, json.dumps(event_data)))
@@ -499,13 +690,13 @@ class DatabaseSessionService(SessionService):
                 
                 # Update session state in database
                 state_json = json.dumps(session.state)
-                cursor.execute("""
+                await cursor.execute("""
                     UPDATE sessions 
                     SET state = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE app_name = ? AND user_id = ? AND session_id = ?
                 """, (state_json, session.app_name, session.user_id, session.id))
             
-            self._connection.commit()
+            await self._connection.commit()
             
             # Add to session object
             session.events.append(event)
@@ -516,15 +707,15 @@ class DatabaseSessionService(SessionService):
     
     async def _load_session_events(self, session: Session) -> None:
         """Load events for a session from database."""
-        with self._db_lock:
-            cursor = self._connection.cursor()
-            cursor.execute("""
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
+            await cursor.execute("""
                 SELECT event_data FROM session_events 
                 WHERE app_name = ? AND session_id = ?
                 ORDER BY id
             """, (session.app_name, session.id))
             
-            for row in cursor.fetchall():
+            async for row in cursor:
                 event_data = json.loads(row['event_data'])
                 
                 # Reconstruct event (simplified)
@@ -539,49 +730,49 @@ class DatabaseSessionService(SessionService):
     
     async def delete_session(self, app_name: str, user_id: str, session_id: str) -> bool:
         """Delete session from database."""
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             
             # Delete events first (foreign key constraint)
-            cursor.execute("""
+            await cursor.execute("""
                 DELETE FROM session_events 
                 WHERE app_name = ? AND session_id = ?
             """, (app_name, session_id))
             
             # Delete session
-            cursor.execute("""
+            await cursor.execute("""
                 DELETE FROM sessions 
                 WHERE app_name = ? AND user_id = ? AND session_id = ?
             """, (app_name, user_id, session_id))
             
             deleted = cursor.rowcount > 0
-            self._connection.commit()
+            await self._connection.commit()
             
-            # Remove from cache
-            self._sessions_cache.pop(session_id, None)
+            # Remove from cache with consistency
+            self._invalidate_cache_entry(session_id)
             
             return deleted
     
     async def list_sessions(self, app_name: str, user_id: Optional[str] = None) -> List[Session]:
         """List sessions from database."""
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             
             if user_id:
-                cursor.execute("""
+                await cursor.execute("""
                     SELECT * FROM sessions 
                     WHERE app_name = ? AND user_id = ?
                     ORDER BY updated_at DESC
                 """, (app_name, user_id))
             else:
-                cursor.execute("""
+                await cursor.execute("""
                     SELECT * FROM sessions 
                     WHERE app_name = ?
                     ORDER BY updated_at DESC
                 """, (app_name,))
             
             sessions = []
-            for row in cursor.fetchall():
+            async for row in cursor:
                 state = json.loads(row['state'])
                 session = Session(
                     app_name=row['app_name'],

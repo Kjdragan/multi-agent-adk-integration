@@ -7,7 +7,7 @@ from unittest.mock import Mock, AsyncMock, patch
 from typing import List, Dict, Any
 
 from src.agents import AgentFactory, AgentOrchestrator, AgentRegistry
-from src.agents.base import AgentResult, AgentCapability
+from src.agents.base import AgentResult, AgentCapability, AgentType
 from src.agents.llm_agent import LLMRole
 from src.agents.orchestrator import OrchestrationStrategy, OrchestrationResult
 from src.config.app import AppConfig
@@ -34,13 +34,15 @@ class TestAgentOrchestrationWorkflows:
         )
         
         # Register agents
-        test_agent_registry.register_agent(researcher)
-        test_agent_registry.register_agent(analyst)
-        test_agent_registry.register_agent(writer)
+        AgentRegistry.register(researcher)
+        AgentRegistry.register(analyst)
+        AgentRegistry.register(writer)
         
         # Mock agent responses
         researcher.execute_task = AsyncMock(return_value=AgentResult(
             agent_id=researcher.agent_id,
+            agent_type=AgentType.LLM,
+            task="Research renewable energy trends",
             result="Research findings: Renewable energy adoption is increasing globally...",
             success=True,
             execution_time_ms=150,
@@ -49,6 +51,8 @@ class TestAgentOrchestrationWorkflows:
         
         analyst.execute_task = AsyncMock(return_value=AgentResult(
             agent_id=analyst.agent_id,
+            agent_type=AgentType.LLM,
+            task="Analyze research data",
             result="Analysis: The data shows a 25% increase in renewable energy investment...",
             success=True,
             execution_time_ms=200,
@@ -57,6 +61,8 @@ class TestAgentOrchestrationWorkflows:
         
         writer.execute_task = AsyncMock(return_value=AgentResult(
             agent_id=writer.agent_id,
+            agent_type=AgentType.LLM,
+            task="Write executive summary",
             result="Executive Summary: Renewable energy markets are experiencing unprecedented growth...",
             success=True,
             execution_time_ms=180,
@@ -91,7 +97,7 @@ class TestAgentOrchestrationWorkflows:
         
         # Register agents
         for agent in [researcher, writer, editor]:
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Create workflow agent
         workflow_agent = agent_factory.create_workflow_agent(
@@ -136,19 +142,22 @@ class TestAgentOrchestrationWorkflows:
         # Mock workflow step execution
         step_results = {
             "research": AgentResult(
-                agent_id=researcher.agent_id,
+                agent_type=AgentType.LLM,
+                task="Research AI in healthcare",
                 result="AI in healthcare research findings...",
                 success=True,
                 execution_time_ms=120
             ),
             "write": AgentResult(
-                agent_id=writer.agent_id,
+                agent_type=AgentType.LLM,
+                task="Write content about AI",
                 result="AI is revolutionizing healthcare in many ways...",
                 success=True,
                 execution_time_ms=200
             ),
             "edit": AgentResult(
-                agent_id=editor.agent_id,
+                agent_type=AgentType.LLM,
+                task="Edit content",
                 result="Edited: AI is transforming healthcare through innovative applications...",
                 success=True,
                 execution_time_ms=100
@@ -179,7 +188,6 @@ class TestAgentOrchestrationWorkflows:
             # Mock different quality responses
             quality_scores = [0.9, 0.7, 0.8]
             agent.execute_task = AsyncMock(return_value=AgentResult(
-                agent_id=agent.agent_id,
                 result=f"Response from competitor {i+1}",
                 success=True,
                 execution_time_ms=100 + i*20,
@@ -187,7 +195,7 @@ class TestAgentOrchestrationWorkflows:
             ))
             
             agents.append(agent)
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Execute competitive orchestration
         result = await agent_orchestrator.orchestrate_task(
@@ -215,7 +223,6 @@ class TestAgentOrchestrationWorkflows:
             )
             
             agent.execute_task = AsyncMock(return_value=AgentResult(
-                agent_id=agent.agent_id,
                 result=f"Detailed {area} research findings...",
                 success=True,
                 execution_time_ms=150,
@@ -223,7 +230,7 @@ class TestAgentOrchestrationWorkflows:
             ))
             
             specialists.append(agent)
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Create synthesizer
         synthesizer = agent_factory.create_llm_agent(
@@ -232,14 +239,13 @@ class TestAgentOrchestrationWorkflows:
         )
         
         synthesizer.execute_task = AsyncMock(return_value=AgentResult(
-            agent_id=synthesizer.agent_id,
             result="Comprehensive synthesis of all research areas...",
             success=True,
             execution_time_ms=300,
             metadata={"synthesis_quality": 0.95}
         ))
         
-        test_agent_registry.register_agent(synthesizer)
+        AgentRegistry.register(synthesizer)
         
         # Execute parallel research
         result = await agent_orchestrator.orchestrate_task(
@@ -266,11 +272,10 @@ class TestAgentCollaboration:
         writer = agent_factory.create_llm_agent(role=LLMRole.COMMUNICATOR, name="Chain Writer")
         
         for agent in [researcher, analyst, writer]:
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Mock agent behaviors with context passing
         researcher.execute_task = AsyncMock(return_value=AgentResult(
-            agent_id=researcher.agent_id,
             result="Initial research data: Market size $100B, growth 15% annually",
             success=True,
             execution_time_ms=100,
@@ -281,7 +286,6 @@ class TestAgentCollaboration:
             # Analyst should receive researcher's result in context
             previous_result = context.get("previous_results", []) if context else []
             return AgentResult(
-                agent_id=analyst.agent_id,
                 result="Analysis based on research: Strong growth trend indicates market opportunity",
                 success=True,
                 execution_time_ms=150,
@@ -294,7 +298,6 @@ class TestAgentCollaboration:
         def writer_task(task, context=None):
             previous_results = context.get("previous_results", []) if context else []
             return AgentResult(
-                agent_id=writer.agent_id,
                 result="Executive Summary: Market analysis reveals significant opportunity...",
                 success=True,
                 execution_time_ms=120,
@@ -372,7 +375,7 @@ class TestAgentCollaboration:
         critic = agent_factory.create_llm_agent(role=LLMRole.CRITIC, name="Content Critic")
         
         for agent in [writer, critic]:
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Simulate feedback loop
         iteration = 0
@@ -385,7 +388,6 @@ class TestAgentCollaboration:
             quality = 0.6 + (iteration * 0.15)  # Improve with feedback
             
             return AgentResult(
-                agent_id=writer.agent_id,
                 result=f"Content v{iteration}: Improved based on feedback",
                 success=True,
                 execution_time_ms=100,
@@ -408,7 +410,6 @@ class TestAgentCollaboration:
                 feedback_score = 0.9
             
             return AgentResult(
-                agent_id=critic.agent_id,
                 result=f"Feedback: Content quality score {feedback_score}",
                 success=True,
                 execution_time_ms=80,
@@ -471,18 +472,16 @@ class TestErrorHandlingAndRecovery:
         backup_agent = agent_factory.create_llm_agent(role=LLMRole.ANALYST, name="Backup Agent")
         
         for agent in [good_agent, failing_agent, backup_agent]:
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Configure agent behaviors
         good_agent.execute_task = AsyncMock(return_value=AgentResult(
-            agent_id=good_agent.agent_id,
             result="Good research result",
             success=True,
             execution_time_ms=100
         ))
         
         failing_agent.execute_task = AsyncMock(return_value=AgentResult(
-            agent_id=failing_agent.agent_id,
             result="",
             success=False,
             execution_time_ms=50,
@@ -490,7 +489,6 @@ class TestErrorHandlingAndRecovery:
         ))
         
         backup_agent.execute_task = AsyncMock(return_value=AgentResult(
-            agent_id=backup_agent.agent_id,
             result="Backup analysis result",
             success=True,
             execution_time_ms=120
@@ -551,20 +549,17 @@ class TestErrorHandlingAndRecovery:
         # Mock step execution with one failure
         step_results = {
             "required_step1": AgentResult(
-                agent_id="agent1",
                 result="Essential research completed",
                 success=True,
                 execution_time_ms=100
             ),
             "optional_step": AgentResult(
-                agent_id="agent2", 
                 result="",
                 success=False,
                 execution_time_ms=50,
                 error_message="Optional step failed"
             ),
             "required_step2": AgentResult(
-                agent_id="agent3",
                 result="Final writing completed", 
                 success=True,
                 execution_time_ms=150
@@ -601,14 +596,13 @@ class TestPerformanceUnderLoad:
             )
             
             agent.execute_task = AsyncMock(return_value=AgentResult(
-                agent_id=agent.agent_id,
                 result=f"Result from agent {i}",
                 success=True,
                 execution_time_ms=100 + i*10
             ))
             
             agents.append(agent)
-            test_agent_registry.register_agent(agent)
+            AgentRegistry.register(agent)
         
         # Create multiple concurrent tasks
         tasks = [
@@ -661,7 +655,6 @@ class TestPerformanceUnderLoad:
             
             with patch.object(workflow_agent, '_execute_step') as mock_execute:
                 mock_execute.return_value = AgentResult(
-                    agent_id="mock_agent",
                     result="Mock task result",
                     success=True,
                     execution_time_ms=50
@@ -710,7 +703,7 @@ class TestRealAPIIntegration:
             name="Real Orchestration Agent"
         )
         
-        test_agent_registry.register_agent(agent)
+        AgentRegistry.register(agent)
         
         # Execute simple orchestration
         result = await agent_orchestrator.orchestrate_task(

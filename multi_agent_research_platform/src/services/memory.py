@@ -5,6 +5,8 @@ Memory service implementations for cross-session knowledge management.
 import json
 import sqlite3
 import threading
+import asyncio
+import aiosqlite
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,7 +35,7 @@ class MemoryService(BaseService, BaseMemoryService, ABC):
         BaseService.__init__(self, name, config.model_dump())
         self.config = config
         self._memory_cache: Dict[str, Dict[str, Any]] = {}
-        self._cache_lock = threading.RLock()
+        self._cache_lock = asyncio.Lock()  # Use asyncio.Lock for async contexts
     
     async def _start_impl(self) -> None:
         """Initialize the memory service."""
@@ -184,6 +186,7 @@ class InMemoryMemoryService(MemoryService):
         super().__init__("in_memory_memory", config)
         self._storage: Dict[str, List[Dict[str, Any]]] = {}  # app_name -> memory entries
         self._keyword_index: Dict[str, Dict[str, List[str]]] = {}  # app_name -> keyword -> entry_ids
+        self._storage_lock = asyncio.Lock()  # Separate lock for storage operations
     
     async def _initialize_storage(self) -> None:
         """Initialize in-memory storage."""
@@ -201,7 +204,7 @@ class InMemoryMemoryService(MemoryService):
             self._log_debug(f"Skipping session {session.id} - doesn't meet ingestion criteria")
             return
         
-        with self._cache_lock:
+        async with self._storage_lock:
             app_name = session.app_name
             
             # Initialize app storage
@@ -243,7 +246,7 @@ class InMemoryMemoryService(MemoryService):
     
     async def search_memory(self, app_name: str, user_id: str, query: str) -> SearchMemoryResponse:
         """Search memory using keyword matching."""
-        with self._cache_lock:
+        async with self._storage_lock:
             if app_name not in self._storage:
                 return SearchMemoryResponse()
             
@@ -292,6 +295,66 @@ class InMemoryMemoryService(MemoryService):
             self._log_debug(f"Memory search for '{query}' returned {len(results)} results")
             return SearchMemoryResponse(memories=results)
     
+    async def search(self, query: str, filters: Optional[Dict[str, Any]] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """Agent-compatible search method wrapper."""
+        app_name = filters.get("agent_id", "default") if filters else "default"
+        user_id = filters.get("user_id", "default") if filters else "default"
+        
+        result = await self.search_memory(app_name, user_id, query)
+        
+        # Convert MemoryEntry objects to dictionaries for agent compatibility
+        memories = []
+        for memory in result.memories[:limit]:
+            memories.append({
+                "content": memory.content.parts[0].text if memory.content.parts else "",
+                "author": memory.author,
+                "timestamp": memory.timestamp,
+                "score": 1.0  # Default score for compatibility
+            })
+        
+        return memories
+    
+    async def store(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Agent-compatible store method wrapper."""
+        app_name = metadata.get("agent_id", "default") if metadata else "default"
+        user_id = metadata.get("user_id", "default") if metadata else "default"
+        
+        # Create a minimal session object for compatibility
+        try:
+            # Import here to avoid circular imports
+            from google.adk.events.event import types
+            from google.genai.types import Part
+            
+            # Create session-like object for memory storage
+            class MemorySession:
+                def __init__(self, text_content: str, metadata: Dict[str, Any]):
+                    self.id = str(uuid.uuid4())
+                    self.app_name = metadata.get("agent_id", "default")
+                    self.user_id = metadata.get("user_id", "default")
+                    self.last_update_time = datetime.utcnow()
+                    self.state = {}
+                    
+                    # Create event with text content
+                    content_obj = types.Content(parts=[Part(text=text_content)])
+                    
+                    # Create mock event
+                    class MockEvent:
+                        def __init__(self, content, author):
+                            self.content = content
+                            self.author = author
+                            self.timestamp = datetime.utcnow()
+                    
+                    self.events = [MockEvent(content_obj, metadata.get("agent_name", "agent"))]
+            
+            # Create session and add to memory
+            session = MemorySession(text, metadata or {})
+            await self.add_session_to_memory(session)
+            return True
+            
+        except Exception as e:
+            self._log_error(f"Failed to store memory: {e}")
+            return False
+    
     async def _cleanup_old_entries(self, app_name: str) -> None:
         """Remove old memory entries based on retention policy."""
         if not self.config.auto_cleanup_enabled:
@@ -331,23 +394,23 @@ class DatabaseMemoryService(MemoryService):
     
     def __init__(self, config: MemoryServiceConfig):
         super().__init__("database_memory", config)
-        self._connection: Optional[sqlite3.Connection] = None
-        self._db_lock = threading.RLock()
+        self._connection: Optional[aiosqlite.Connection] = None
+        self._db_lock = asyncio.Lock()  # Use asyncio.Lock for async database operations
     
     async def _initialize_storage(self) -> None:
         """Initialize database storage."""
         db_path = Path("data/memory.db")
         db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        self._connection = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
+        self._connection = await aiosqlite.connect(str(db_path))
+        self._connection.row_factory = aiosqlite.Row
         
         # Create tables
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             
             # Memory entries table
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS memory_entries (
                     id TEXT PRIMARY KEY,
                     app_name TEXT NOT NULL,
@@ -363,28 +426,28 @@ class DatabaseMemoryService(MemoryService):
             """)
             
             # Full-text search virtual table
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts 
                 USING fts5(content, tokenize = 'unicode61 remove_diacritics 2')
             """)
             
             # Indexes
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_memory_app_user 
                 ON memory_entries (app_name, user_id)
             """)
             
-            cursor.execute("""
+            await cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_memory_created 
                 ON memory_entries (created_at)
             """)
             
-            self._connection.commit()
+            await self._connection.commit()
     
     async def _cleanup_storage(self) -> None:
         """Close database connection."""
         if self._connection:
-            self._connection.close()
+            await self._connection.close()
             self._connection = None
     
     async def add_session_to_memory(self, session: Session) -> None:
@@ -393,8 +456,8 @@ class DatabaseMemoryService(MemoryService):
             self._log_debug(f"Skipping session {session.id} - doesn't meet ingestion criteria")
             return
         
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             content_entries = self._extract_session_content(session)
             
             for content_entry in content_entries:
@@ -402,7 +465,7 @@ class DatabaseMemoryService(MemoryService):
                 keywords = self._create_keywords(content_entry['content'])
                 
                 # Insert into memory_entries
-                cursor.execute("""
+                await cursor.execute("""
                     INSERT INTO memory_entries 
                     (id, app_name, session_id, user_id, content, content_type, author, timestamp, keywords)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -419,11 +482,11 @@ class DatabaseMemoryService(MemoryService):
                 ))
                 
                 # Insert into FTS table
-                cursor.execute("""
+                await cursor.execute("""
                     INSERT INTO memory_fts (content) VALUES (?)
                 """, (content_entry['content'],))
             
-            self._connection.commit()
+            await self._connection.commit()
             
             # Cleanup old entries
             await self._cleanup_old_entries_db(session.app_name)
@@ -432,11 +495,11 @@ class DatabaseMemoryService(MemoryService):
     
     async def search_memory(self, app_name: str, user_id: str, query: str) -> SearchMemoryResponse:
         """Search memory using database full-text search."""
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             
             # Use FTS for content search
-            cursor.execute("""
+            await cursor.execute("""
                 SELECT me.*, 
                        bm25(mf.content) as score
                 FROM memory_entries me
@@ -448,7 +511,7 @@ class DatabaseMemoryService(MemoryService):
             """, (app_name, query, self.config.similarity_top_k))
             
             results = []
-            for row in cursor.fetchall():
+            async for row in cursor:
                 # Normalize score (FTS scores are negative, lower is better)
                 normalized_score = max(0, 1.0 + (row['score'] / 10.0))
                 
@@ -471,24 +534,24 @@ class DatabaseMemoryService(MemoryService):
         if not self.config.auto_cleanup_enabled:
             return
         
-        with self._db_lock:
-            cursor = self._connection.cursor()
+        async with self._db_lock:
+            cursor = await self._connection.cursor()
             cutoff_date = datetime.utcnow() - timedelta(days=self.config.memory_retention_days)
             
             # Delete old entries
-            cursor.execute("""
+            await cursor.execute("""
                 DELETE FROM memory_entries 
                 WHERE app_name = ? AND created_at < ?
             """, (app_name, cutoff_date))
             
             # Clean up FTS table (remove orphaned entries)
-            cursor.execute("""
+            await cursor.execute("""
                 DELETE FROM memory_fts 
                 WHERE content NOT IN (SELECT content FROM memory_entries)
             """)
             
             deleted_count = cursor.rowcount
-            self._connection.commit()
+            await self._connection.commit()
             
             if deleted_count > 0:
                 self._log_info(f"Cleaned up {deleted_count} old memory entries for {app_name}")

@@ -8,6 +8,7 @@ thinking budgets and structured output capabilities.
 
 import time
 import json
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 from enum import Enum
@@ -23,8 +24,9 @@ from ..mcp import MCPOrchestrator
 from ..config.gemini_models import (
     GeminiModel, TaskComplexity, ModelSelector, GeminiGenerationConfig,
     ThinkingBudgetConfig, StructuredOutputConfig, select_model_for_task,
-    analyze_task_complexity
+    analyze_task_complexity, get_model_config
 )
+from ..config.manager import require_google_api_key, get_config_manager
 
 
 class LLMRole(str, Enum):
@@ -206,6 +208,13 @@ class LLMAgent(Agent):
         self.average_response_time_ms = 0.0
         self.successful_tasks = 0
         self.failed_tasks = 0
+        
+        # API management
+        self._api_call_count = 0
+        self._last_api_call_time = 0.0
+        self._rate_limit_delay = 0.1  # Minimum delay between API calls
+        self._max_retries = 3
+        self._retry_delays = [1, 2, 4]  # Exponential backoff delays
     
     def _determine_capabilities(self, role: LLMRole) -> List[AgentCapability]:
         """Determine capabilities based on agent role."""
@@ -635,17 +644,21 @@ You have access to various tools and can search for information when needed. Alw
                     system_instruction=self.config.get_full_system_instruction()
                 )
             
-            # Create Google GenAI client
+            # Create Google GenAI client with proper API key
+            api_key = require_google_api_key()
             client = genai.Client(
+                api_key=api_key,
                 http_options=HttpOptions(api_version="v1")
             )
             
             # Prepare generation config for API
             api_config = generation_config.to_generate_content_config()
             
-            # Add system instruction if provided
+            # Add system instruction if provided - correct format for Google AI API
             if generation_config.system_instruction:
-                api_config["system_instruction"] = generation_config.system_instruction
+                # The Google AI API expects system instructions as part of the contents, not as a separate field
+                # We'll handle this in the generate_content call instead
+                pass
             
             # Log model selection if logger available
             if self.logger:
@@ -655,12 +668,22 @@ You have access to various tools and can search for information when needed. Alw
                     f"Structured: {generation_config.structured_output.enabled if generation_config.structured_output else False}"
                 )
             
-            # Generate response
-            response = await client.models.generate_content(
-                model=generation_config.model.model_id.value,
-                contents=task,
-                config=GenerateContentConfig(**api_config)
-            )
+            # Validate API configuration
+            if not await self._validate_api_config(generation_config):
+                raise ValueError("Invalid API configuration")
+            
+            # Prepare contents with proper system instruction format
+            contents = await self._format_api_contents(task, generation_config.system_instruction)
+            
+            # Generate response with rate limiting and retry
+            async def make_api_call():
+                return await client.models.generate_content(
+                    model=generation_config.model.model_id.value,
+                    contents=contents,
+                    config=GenerateContentConfig(**api_config)
+                )
+            
+            response = await self._rate_limited_api_call(make_api_call)
             
             # Extract response text
             response_text = response.text
@@ -713,28 +736,35 @@ You have access to various tools and can search for information when needed. Alw
                 system_instruction=self.config.get_full_system_instruction()
             )
             
-            # Create client
+            # Create client with proper API key
+            api_key = require_google_api_key()
             client = genai.Client(
+                api_key=api_key,
                 http_options=HttpOptions(api_version="v1")
             )
             
-            # Prepare task with role context
+            # Prepare task with role context and system instruction
             enhanced_task = f"As a {self.config.role.value} agent, {task}"
+            
+            # Prepare contents with proper system instruction format
+            contents = await self._format_api_contents(enhanced_task, generation_config.system_instruction)
             
             if self.logger:
                 self.logger.info(f"Direct LLM fallback using {model_config.name}")
             
-            # Generate response with basic configuration
-            response = await client.models.generate_content(
-                model=generation_config.model.model_id.value,
-                contents=enhanced_task,
-                config=GenerateContentConfig(
-                    temperature=generation_config.temperature,
-                    top_p=generation_config.top_p,
-                    top_k=generation_config.top_k,
-                    system_instruction=generation_config.system_instruction
+            # Generate response with rate limiting and retry
+            async def make_fallback_call():
+                return await client.models.generate_content(
+                    model=generation_config.model.model_id.value,
+                    contents=contents,
+                    config=GenerateContentConfig(
+                        temperature=generation_config.temperature,
+                        top_p=generation_config.top_p,
+                        top_k=generation_config.top_k
+                    )
                 )
-            )
+            
+            response = await self._rate_limited_api_call(make_fallback_call)
             
             # Update token usage
             if hasattr(response, 'usage_metadata') and response.usage_metadata:
@@ -752,6 +782,138 @@ You have access to various tools and can search for information when needed. Alw
             # Ultimate fallback - return error message
             role = self.config.role.value
             return f"I apologize, but I encountered an error while processing your request as a {role} agent. The error was: {str(e)[:100]}. Please try again or contact support if this issue persists."
+    
+    async def _rate_limited_api_call(self, api_call_func, *args, **kwargs):
+        """Execute API call with rate limiting and retry logic."""
+        # Rate limiting
+        current_time = time.time()
+        time_since_last_call = current_time - self._last_api_call_time
+        if time_since_last_call < self._rate_limit_delay:
+            await asyncio.sleep(self._rate_limit_delay - time_since_last_call)
+        
+        for attempt in range(self._max_retries + 1):
+            try:
+                # Update rate limiting tracking
+                self._last_api_call_time = time.time()
+                self._api_call_count += 1
+                
+                # Execute API call
+                result = await api_call_func(*args, **kwargs)
+                
+                if self.logger and attempt > 0:
+                    self.logger.info(f"API call succeeded on attempt {attempt + 1}")
+                
+                return result
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # Check for rate limiting errors
+                if "rate limit" in error_msg or "quota" in error_msg or "429" in error_msg:
+                    if attempt < self._max_retries:
+                        delay = self._retry_delays[attempt] * 2  # Double delay for rate limits
+                        if self.logger:
+                            self.logger.warning(f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1})")
+                        await asyncio.sleep(delay)
+                        continue
+                
+                # Check for temporary errors
+                elif any(err in error_msg for err in ["timeout", "connection", "503", "502", "500"]):
+                    if attempt < self._max_retries:
+                        delay = self._retry_delays[attempt]
+                        if self.logger:
+                            self.logger.warning(f"Temporary error, retrying in {delay}s: {str(e)[:100]}")
+                        await asyncio.sleep(delay)
+                        continue
+                
+                # Check for authentication errors (don't retry)
+                elif any(err in error_msg for err in ["auth", "permission", "401", "403"]):
+                    if self.logger:
+                        self.logger.error(f"Authentication error - not retrying: {e}")
+                    raise
+                
+                # Other errors - retry with backoff
+                else:
+                    if attempt < self._max_retries:
+                        delay = self._retry_delays[attempt]
+                        if self.logger:
+                            self.logger.warning(f"API error, retrying in {delay}s: {str(e)[:100]}")
+                        await asyncio.sleep(delay)
+                        continue
+                
+                # Max retries reached
+                if self.logger:
+                    self.logger.error(f"API call failed after {self._max_retries + 1} attempts: {e}")
+                raise
+    
+    async def _validate_api_config(self, generation_config: 'GeminiGenerationConfig') -> bool:
+        """Validate API configuration before making calls."""
+        try:
+            # Check if API key is available
+            api_key = require_google_api_key()
+            if not api_key:
+                raise ValueError("Google API key not available")
+            
+            # Validate model configuration
+            if not generation_config.model:
+                raise ValueError("Model configuration is missing")
+            
+            # Check if thinking configuration is valid for the model
+            if (generation_config.thinking_config and 
+                generation_config.thinking_config.enabled and 
+                not generation_config.model.supports_thinking):
+                
+                if self.logger:
+                    self.logger.warning(f"Model {generation_config.model.name} doesn't support thinking - disabling")
+                generation_config.thinking_config.enabled = False
+            
+            # Validate structured output configuration
+            if (generation_config.structured_output and 
+                generation_config.structured_output.enabled):
+                
+                from ..config.gemini_models import ModelCapability
+                if ModelCapability.STRUCTURED_OUTPUT not in generation_config.model.capabilities:
+                    if self.logger:
+                        self.logger.warning(f"Model {generation_config.model.name} doesn't support structured output - disabling")
+                    generation_config.structured_output.enabled = False
+            
+            return True
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"API configuration validation failed: {e}")
+            return False
+    
+    async def _format_api_contents(self, task: str, system_instruction: Optional[str] = None):
+        """Format contents for Google AI API with proper system instruction handling."""
+        if not system_instruction:
+            # Simple user message format
+            return task
+        
+        # Google AI API format for system + user messages
+        # Note: Google AI API has specific requirements for system instructions
+        try:
+            # Method 1: Combined in user message (most reliable)
+            combined_message = f"{system_instruction}\n\nUser Request: {task}"
+            return combined_message
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"System instruction formatting failed, using simple format: {e}")
+            return task
+    
+    def get_api_stats(self) -> Dict[str, Any]:
+        """Get API usage statistics."""
+        return {
+            "total_api_calls": self._api_call_count,
+            "successful_tasks": self.successful_tasks,
+            "failed_tasks": self.failed_tasks,
+            "total_tokens_used": self.total_tokens_used,
+            "average_response_time_ms": self.average_response_time_ms,
+            "success_rate": self.successful_tasks / max(1, self.successful_tasks + self.failed_tasks),
+            "rate_limit_delay": self._rate_limit_delay,
+            "max_retries": self._max_retries
+        }
     
     def _update_conversation_history(self, task: str, response: str) -> None:
         """Update conversation history."""

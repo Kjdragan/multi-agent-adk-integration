@@ -7,6 +7,7 @@ integrating with ADK tools and MCP servers.
 
 import time
 import asyncio
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union, Callable, Set
@@ -369,42 +370,69 @@ class Agent(ABC):
 
 
 class AgentRegistry:
-    """Registry for managing agents in the system."""
+    """Thread-safe registry for managing agents in the system."""
     
     _agents: Dict[str, Agent] = {}
     _agents_by_type: Dict[AgentType, List[Agent]] = {}
     _agents_by_capability: Dict[AgentCapability, List[Agent]] = {}
+    _lock = threading.RLock()  # Use RLock for nested calls
     
     @classmethod
     def register(cls, agent: Agent) -> None:
-        """Register an agent."""
-        cls._agents[agent.agent_id] = agent
-        
-        # Index by type
-        if agent.agent_type not in cls._agents_by_type:
-            cls._agents_by_type[agent.agent_type] = []
-        cls._agents_by_type[agent.agent_type].append(agent)
-        
-        # Index by capabilities
-        for capability in agent.get_capabilities():
-            if capability not in cls._agents_by_capability:
-                cls._agents_by_capability[capability] = []
-            cls._agents_by_capability[capability].append(agent)
+        """Thread-safe agent registration."""
+        with cls._lock:
+            # Check for duplicate registration
+            if agent.agent_id in cls._agents:
+                existing = cls._agents[agent.agent_id]
+                if existing is not agent:
+                    # Different agent with same ID - unregister old one first
+                    cls._unregister_locked(agent.agent_id)
+            
+            cls._agents[agent.agent_id] = agent
+            
+            # Index by type (atomic)
+            if agent.agent_type not in cls._agents_by_type:
+                cls._agents_by_type[agent.agent_type] = []
+            cls._agents_by_type[agent.agent_type].append(agent)
+            
+            # Index by capabilities (atomic)
+            for capability in agent.get_capabilities():
+                if capability not in cls._agents_by_capability:
+                    cls._agents_by_capability[capability] = []
+                cls._agents_by_capability[capability].append(agent)
     
     @classmethod
     def unregister(cls, agent_id: str) -> bool:
-        """Unregister an agent."""
+        """Thread-safe agent unregistration."""
+        with cls._lock:
+            return cls._unregister_locked(agent_id)
+    
+    @classmethod
+    def _unregister_locked(cls, agent_id: str) -> bool:
+        """Internal unregister method (assumes lock is held)."""
         if agent_id in cls._agents:
             agent = cls._agents[agent_id]
             
             # Remove from type index
             if agent.agent_type in cls._agents_by_type:
-                cls._agents_by_type[agent.agent_type].remove(agent)
+                try:
+                    cls._agents_by_type[agent.agent_type].remove(agent)
+                    # Clean up empty lists to prevent memory leaks
+                    if not cls._agents_by_type[agent.agent_type]:
+                        del cls._agents_by_type[agent.agent_type]
+                except ValueError:
+                    pass  # Agent wasn't in list (shouldn't happen but be defensive)
             
             # Remove from capability index
             for capability in agent.get_capabilities():
                 if capability in cls._agents_by_capability:
-                    cls._agents_by_capability[capability].remove(agent)
+                    try:
+                        cls._agents_by_capability[capability].remove(agent)
+                        # Clean up empty lists to prevent memory leaks
+                        if not cls._agents_by_capability[capability]:
+                            del cls._agents_by_capability[capability]
+                    except ValueError:
+                        pass  # Agent wasn't in list (shouldn't happen but be defensive)
             
             del cls._agents[agent_id]
             return True
@@ -413,61 +441,68 @@ class AgentRegistry:
     
     @classmethod
     def get_agent(cls, agent_id: str) -> Optional[Agent]:
-        """Get agent by ID."""
-        return cls._agents.get(agent_id)
+        """Thread-safe agent lookup by ID."""
+        with cls._lock:
+            return cls._agents.get(agent_id)
     
     @classmethod
     def get_agents_by_type(cls, agent_type: AgentType) -> List[Agent]:
-        """Get all agents of a specific type."""
-        return cls._agents_by_type.get(agent_type, [])
+        """Thread-safe agent lookup by type."""
+        with cls._lock:
+            return cls._agents_by_type.get(agent_type, []).copy()  # Return copy to avoid external modification
     
     @classmethod
     def get_agents_by_capability(cls, capability: AgentCapability) -> List[Agent]:
-        """Get all agents with a specific capability."""
-        return cls._agents_by_capability.get(capability, [])
+        """Thread-safe agent lookup by capability."""
+        with cls._lock:
+            return cls._agents_by_capability.get(capability, []).copy()  # Return copy to avoid external modification
     
     @classmethod
     def find_capable_agents(cls, 
                           required_capabilities: List[AgentCapability],
                           agent_type: Optional[AgentType] = None) -> List[Agent]:
-        """Find agents that have all required capabilities."""
-        capable_agents = []
-        
-        agents_to_check = (
-            cls.get_agents_by_type(agent_type) if agent_type
-            else list(cls._agents.values())
-        )
-        
-        for agent in agents_to_check:
-            if agent.can_handle_task("", required_capabilities):
-                capable_agents.append(agent)
-        
-        return capable_agents
+        """Thread-safe search for agents with required capabilities."""
+        with cls._lock:
+            capable_agents = []
+            
+            agents_to_check = (
+                cls._agents_by_type.get(agent_type, []) if agent_type
+                else list(cls._agents.values())
+            )
+            
+            for agent in agents_to_check:
+                if agent.can_handle_task("", required_capabilities):
+                    capable_agents.append(agent)
+            
+            return capable_agents
     
     @classmethod
     def get_all_agents(cls) -> List[Agent]:
-        """Get all registered agents."""
-        return list(cls._agents.values())
+        """Thread-safe retrieval of all registered agents."""
+        with cls._lock:
+            return list(cls._agents.values())
     
     @classmethod
     def get_registry_status(cls) -> Dict[str, Any]:
-        """Get status of the agent registry."""
-        return {
-            "total_agents": len(cls._agents),
-            "agents_by_type": {
-                agent_type.value: len(agents)
-                for agent_type, agents in cls._agents_by_type.items()
-            },
-            "agents_by_capability": {
-                capability.value: len(agents)
-                for capability, agents in cls._agents_by_capability.items()
-            },
-            "active_agents": sum(1 for agent in cls._agents.values() if agent.is_active),
-        }
+        """Thread-safe registry status retrieval."""
+        with cls._lock:
+            return {
+                "total_agents": len(cls._agents),
+                "agents_by_type": {
+                    agent_type.value: len(agents)
+                    for agent_type, agents in cls._agents_by_type.items()
+                },
+                "agents_by_capability": {
+                    capability.value: len(agents)
+                    for capability, agents in cls._agents_by_capability.items()
+                },
+                "active_agents": sum(1 for agent in cls._agents.values() if agent.is_active),
+            }
     
     @classmethod
     def clear(cls) -> None:
-        """Clear all agents from the registry."""
-        cls._agents.clear()
-        cls._agents_by_type.clear()
-        cls._agents_by_capability.clear()
+        """Thread-safe registry clear operation."""
+        with cls._lock:
+            cls._agents.clear()
+            cls._agents_by_type.clear()
+            cls._agents_by_capability.clear()

@@ -5,7 +5,7 @@ Configuration settings and utilities for the Streamlit production interface
 of the multi-agent research platform.
 """
 
-from dataclasses import dataclass, field
+# Remove dataclass import as we're using Pydantic models
 from typing import Dict, List, Any, Optional
 from enum import Enum
 
@@ -25,7 +25,6 @@ class PageLayout(str, Enum):
     CENTERED = "centered"
 
 
-@dataclass
 class StreamlitConfig(BaseConfig):
     """Main Streamlit application configuration."""
     
@@ -101,7 +100,6 @@ class StreamlitConfig(BaseConfig):
         }
 
 
-@dataclass 
 class UIConfig(BaseConfig):
     """User interface configuration."""
     
@@ -209,7 +207,6 @@ class UIConfig(BaseConfig):
         """
 
 
-@dataclass
 class SecurityConfig(BaseConfig):
     """Security configuration for Streamlit app."""
     
@@ -259,13 +256,15 @@ class StreamlitConfigFactory:
     @classmethod
     def create_development_config(cls) -> Dict[str, Any]:
         """Create configuration for development environment."""
+        # Create with defaults, then override specific values
+        streamlit_config = StreamlitConfig()
+        streamlit_config.theme = StreamlitTheme.LIGHT
+        streamlit_config.enable_real_time_updates = True
+        streamlit_config.auto_create_demo_agents = True
+        streamlit_config.cache_enabled = False  # Disable caching for development
+        
         return {
-            "streamlit": StreamlitConfig(
-                theme=StreamlitTheme.LIGHT,
-                enable_real_time_updates=True,
-                auto_create_demo_agents=True,
-                cache_enabled=False,  # Disable caching for development
-            ),
+            "streamlit": streamlit_config,
             "ui": UIConfig(
                 enable_animations=True,
             ),
@@ -279,14 +278,16 @@ class StreamlitConfigFactory:
     @classmethod
     def create_production_config(cls) -> Dict[str, Any]:
         """Create configuration for production environment."""
+        # Create with defaults, then override specific values
+        streamlit_config = StreamlitConfig()
+        streamlit_config.theme = StreamlitTheme.LIGHT
+        streamlit_config.enable_real_time_updates = False
+        streamlit_config.auto_create_demo_agents = False
+        streamlit_config.cache_enabled = True
+        streamlit_config.session_state_cleanup = True
+        
         return {
-            "streamlit": StreamlitConfig(
-                theme=StreamlitTheme.LIGHT,
-                enable_real_time_updates=False,
-                auto_create_demo_agents=False,
-                cache_enabled=True,
-                session_state_cleanup=True,
-            ),
+            "streamlit": streamlit_config,
             "ui": UIConfig(
                 enable_animations=True,
             ),

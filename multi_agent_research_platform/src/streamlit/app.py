@@ -26,8 +26,61 @@ sys.path.insert(0, str(project_root))
 from src.agents import AgentRegistry, AgentOrchestrator, AgentFactory, AgentSuite, OrchestrationStrategy, TaskPriority
 from src.agents.llm_agent import LLMRole
 from src.agents.custom_agent import CustomAgentType
-from src.platform_logging import RunLogger, LogLevel
-from src.services import SessionService, MemoryService
+from src.platform_logging import RunLogger, LogLevel, LogConfig, LogFormat, setup_logging
+from src.services.session import InMemorySessionService
+from src.services.memory import InMemoryMemoryService
+
+# Cache resource for services - Streamlit recommended pattern for global resources
+@st.cache_resource
+def get_platform_services():
+    """Initialize and cache platform services (shared across all sessions)."""
+    # Initialize proper logging system
+    log_config = LogConfig(
+        log_dir=Path("/home/kjdrag/lrepos/multi-agent-adk-integration/logs"),
+        log_level=LogLevel.DEBUG,
+        log_format=LogFormat.JSON,
+        retention_days=7
+    )
+    
+    platform_logger = setup_logging(log_config)
+    
+    # Create console logger for immediate feedback
+    import logging
+    logger = logging.getLogger("streamlit_app")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+    
+    # Initialize services
+    session_service = InMemorySessionService()
+    memory_service = InMemoryMemoryService()
+    
+    # Initialize orchestrator and factory
+    orchestrator = AgentOrchestrator(
+        logger=logger,
+        session_service=session_service
+    )
+    
+    factory = AgentFactory(
+        logger=logger,
+        session_service=session_service,
+        memory_service=memory_service
+    )
+    
+    logger.info(f"Platform services initialized successfully")
+    logger.info(f"AgentFactory: {factory}")
+    logger.debug(f"Factory methods: {[method for method in dir(factory) if not method.startswith('_')]}")
+    
+    return {
+        'logger': logger,
+        'session_service': session_service,
+        'memory_service': memory_service,
+        'orchestrator': orchestrator,
+        'factory': factory,
+        'platform_logger': platform_logger
+    }
 
 
 # Page configuration
@@ -86,63 +139,69 @@ class StreamlitApp:
     """Main Streamlit application for the multi-agent research platform."""
     
     def __init__(self):
-        self.logger = None
-        self.session_service = None
-        self.memory_service = None
-        self.orchestrator = None
-        self.factory = None
+        # Get cached services - this ensures consistent initialization across all sessions
+        services = get_platform_services()
+        
+        # Assign services to instance variables
+        self.logger = services['logger']
+        self.session_service = services['session_service']
+        self.memory_service = services['memory_service']
+        self.orchestrator = services['orchestrator']
+        self.factory = services['factory']
         
         # Initialize session state
         self._initialize_session_state()
         
-        # Initialize services
-        self._initialize_services()
+        self.logger.info("StreamlitApp initialized with cached services")
+    
     
     def _initialize_session_state(self):
-        """Initialize Streamlit session state variables."""
-        if 'initialized' not in st.session_state:
-            st.session_state.initialized = False
-            st.session_state.agents_created = False
-            st.session_state.task_history = []
-            st.session_state.current_agents = []
-            st.session_state.orchestration_results = []
-            st.session_state.system_metrics = {
-                'total_tasks': 0,
-                'successful_tasks': 0,
-                'active_agents': 0,
-                'avg_response_time': 0
-            }
-    
-    def _initialize_services(self):
-        """Initialize core services."""
+        """Initialize Streamlit session state variables with error handling."""
         try:
-            if not st.session_state.initialized:
-                # Initialize logger
-                self.logger = RunLogger(
-                    level=LogLevel.INFO,
-                    console_output=True,
-                    file_output=False  # Disable file logging in Streamlit
-                )
+            # Atomic initialization check
+            if not hasattr(st.session_state, '_initializing') and 'initialized' not in st.session_state:
+                # Set flag to prevent race conditions
+                st.session_state._initializing = True
                 
-                # Initialize services
-                self.session_service = SessionService()
-                self.memory_service = MemoryService()
+                # Initialize all session state variables atomically
+                default_state = {
+                    'initialized': True,
+                    'agents_created': False,
+                    'task_history': [],
+                    'current_agents': [],
+                    'orchestration_results': [],
+                    'system_metrics': {
+                        'total_tasks': 0,
+                        'successful_tasks': 0,
+                        'active_agents': 0,
+                        'avg_response_time': 0,
+                        'last_reset': datetime.now()
+                    },
+                    'error_count': 0,
+                    'last_error': None
+                }
                 
-                # Initialize orchestrator and factory
-                self.orchestrator = AgentOrchestrator(
-                    logger=self.logger,
-                    session_service=self.session_service
-                )
+                # Set all values atomically
+                for key, value in default_state.items():
+                    st.session_state[key] = value
                 
-                self.factory = AgentFactory(
-                    logger=self.logger,
-                    session_service=self.session_service
-                )
+                # Clear initialization flag
+                delattr(st.session_state, '_initializing')
                 
-                st.session_state.initialized = True
+                self.logger.info("Session state initialized successfully")
+                
+            elif hasattr(st.session_state, '_initializing'):
+                # If another thread is initializing, wait briefly
+                import time
+                time.sleep(0.1)
                 
         except Exception as e:
-            st.error(f"Failed to initialize services: {e}")
+            self.logger.error(f"Session state initialization failed: {e}")
+            # Fallback to basic initialization
+            if 'initialized' not in st.session_state:
+                st.session_state.initialized = False
+                st.session_state.error_count = getattr(st.session_state, 'error_count', 0) + 1
+                st.session_state.last_error = str(e)
     
     def run(self):
         """Main application entry point."""
@@ -293,10 +352,20 @@ class StreamlitApp:
         """Create a predefined agent team."""
         try:
             with st.spinner("Creating agent team..."):
+                self.logger.info(f"Creating agent suite: {suite_type}")
+                self.logger.debug(f"Factory instance: {self.factory}")
+                self.logger.debug(f"Factory type: {type(self.factory)}")
+                
+                if self.factory is None:
+                    self.logger.error("Factory is None - initialization failed")
+                    raise ValueError("AgentFactory is not initialized")
+                
                 agents = self.factory.create_agent_suite(suite_type)
+                self.logger.info(f"Successfully created {len(agents)} agents")
                 
                 # Activate all agents
                 for agent in agents:
+                    self.logger.debug(f"Activating agent: {agent.name}")
                     asyncio.run(agent.activate())
                 
                 st.success(f"✅ Created {len(agents)} agents successfully!")
@@ -304,7 +373,13 @@ class StreamlitApp:
                 st.rerun()
                 
         except Exception as e:
+            self.logger.error(f"Failed to create team: {e}", exc_info=True)
             st.error(f"Failed to create team: {e}")
+            
+            # Print to console for debugging
+            import traceback
+            print(f"ERROR: Failed to create team: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
     
     def _render_task_execution(self):
         """Render task execution interface."""
@@ -430,15 +505,30 @@ class StreamlitApp:
                         st.metric("Consensus Score", f"{result.consensus_score:.1%}")
                 
                 # Agent contributions
-                if result.agent_results:
+                if result.all_results:
                     st.write("**Agent Contributions:**")
-                    for agent_id, agent_result in result.agent_results.items():
-                        agent = AgentRegistry.get_agent(agent_id)
-                        agent_name = agent.name if agent else agent_id
+                    for agent_id, agent_result in result.all_results.items():
+                        try:
+                            agent = AgentRegistry.get_agent(agent_id)
+                            agent_name = agent.name if agent else agent_id
+                        except Exception:
+                            # Fallback if agent lookup fails
+                            agent_name = agent_id
                         
                         with st.container():
                             st.write(f"**{agent_name}:**")
-                            st.text(str(agent_result.result)[:200] + "..." if len(str(agent_result.result)) > 200 else str(agent_result.result))
+                            # agent_result is a dictionary, so access the 'result' key safely
+                            if isinstance(agent_result, dict):
+                                result_text = str(agent_result.get("result", "No result"))
+                                success = agent_result.get("success", False)
+                                error = agent_result.get("error")
+                                
+                                if success:
+                                    st.text(result_text[:200] + "..." if len(result_text) > 200 else result_text)
+                                else:
+                                    st.error(f"Agent failed: {error or 'Unknown error'}")
+                            else:
+                                st.warning(f"Unexpected result format: {type(agent_result)}")
         else:
             st.error("❌ Task failed")
             if result.error:

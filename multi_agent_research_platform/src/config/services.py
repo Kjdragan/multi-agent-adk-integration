@@ -127,17 +127,20 @@ class SessionServiceConfig(BaseModel):
     @classmethod
     def validate_service_config(cls, v, info):
         """Validate service-specific configuration."""
-        values = info.data if info else {}
-        
-        if v in [SessionServiceType.DATABASE, SessionServiceType.VERTEX_AI]:
-            if not values.get('database_url'):
-                raise ValueError(f"{v} service type requires database_url")
-        
-        if v == SessionServiceType.VERTEX_AI:
-            if not values.get('vertex_ai_project'):
-                raise ValueError("Vertex AI service requires vertex_ai_project")
-        
+        # Note: info.data may be incomplete during validation, so we only validate
+        # what we can and defer complete validation to model_post_init
         return v
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation with complete data."""
+        # Validate service-specific requirements with complete data
+        if self.service_type in [SessionServiceType.DATABASE, SessionServiceType.VERTEX_AI]:
+            if not self.database_url:
+                raise ValueError(f"{self.service_type} service type requires database_url")
+        
+        if self.service_type == SessionServiceType.VERTEX_AI:
+            if not self.vertex_ai_project:
+                raise ValueError("Vertex AI service requires vertex_ai_project")
 
 
 class MemoryServiceConfig(BaseModel):
@@ -240,19 +243,25 @@ class MemoryServiceConfig(BaseModel):
     @classmethod
     def validate_memory_config(cls, v, info):
         """Validate memory service configuration."""
-        values = info.data if info else {}
-        
-        if v == MemoryServiceType.VERTEX_AI_RAG:
-            required_fields = ['vertex_ai_project', 'rag_corpus_name']
-            missing = [f for f in required_fields if not values.get(f)]
-            if missing:
-                raise ValueError(f"Vertex AI RAG requires: {', '.join(missing)}")
-        
-        if v == MemoryServiceType.DATABASE:
-            if not values.get('database_url'):
-                raise ValueError("Database memory service requires database_url")
-        
+        # Note: info.data may be incomplete during validation, so we only validate
+        # what we can and defer complete validation to model_post_init
         return v
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation with complete data."""
+        # Validate service-specific requirements with complete data
+        if self.service_type == MemoryServiceType.VERTEX_AI_RAG:
+            required_fields = []
+            if not self.vertex_ai_project:
+                required_fields.append('vertex_ai_project')
+            if not self.rag_corpus_name:
+                required_fields.append('rag_corpus_name')
+            if required_fields:
+                raise ValueError(f"Vertex AI RAG requires: {', '.join(required_fields)}")
+        
+        if self.service_type == MemoryServiceType.DATABASE:
+            if not self.database_url:
+                raise ValueError("Database memory service requires database_url")
 
 
 class ArtifactServiceConfig(BaseModel):
@@ -372,32 +381,39 @@ class ArtifactServiceConfig(BaseModel):
         description="Encryption key (if not using cloud provider encryption)"
     )
     
-    def model_post_init(self, __context) -> None:
-        """Post-initialization setup."""
-        if self.service_type == ArtifactServiceType.LOCAL_FILE:
-            self.local_storage_path.mkdir(parents=True, exist_ok=True)
+    # model_post_init moved to after field_validator to handle all validation
     
     @field_validator('service_type')
     @classmethod
     def validate_artifact_config(cls, v, info):
         """Validate artifact service configuration."""
-        values = info.data if info else {}
+        # Note: info.data may be incomplete during validation, so we only validate
+        # what we can and defer complete validation to model_post_init
+        return v
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation with complete data."""
+        # Create storage directory for local file storage
+        if self.service_type == ArtifactServiceType.LOCAL_FILE:
+            self.local_storage_path.mkdir(parents=True, exist_ok=True)
         
-        if v == ArtifactServiceType.GCS:
-            required = ['gcs_bucket_name', 'gcs_project']
-            missing = [f for f in required if not values.get(f)]
-            if missing:
-                raise ValueError(f"GCS artifact service requires: {', '.join(missing)}")
+        # Validate service-specific requirements with complete data
+        elif self.service_type == ArtifactServiceType.GCS:
+            required = []
+            if not self.gcs_bucket_name:
+                required.append('gcs_bucket_name')
+            if not self.gcs_project:
+                required.append('gcs_project')
+            if required:
+                raise ValueError(f"GCS artifact service requires: {', '.join(required)}")
         
-        if v == ArtifactServiceType.S3:
-            if not values.get('s3_bucket_name'):
+        elif self.service_type == ArtifactServiceType.S3:
+            if not self.s3_bucket_name:
                 raise ValueError("S3 artifact service requires s3_bucket_name")
         
-        if v == ArtifactServiceType.DATABASE:
-            if not values.get('database_url'):
+        elif self.service_type == ArtifactServiceType.DATABASE:
+            if not self.database_url:
                 raise ValueError("Database artifact service requires database_url")
-        
-        return v
 
 
 class ServicesConfig(BaseConfig):

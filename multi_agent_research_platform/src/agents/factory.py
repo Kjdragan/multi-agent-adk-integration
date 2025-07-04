@@ -323,6 +323,190 @@ class AgentFactory:
         
         return deactivated_count
     
+    def remove_agent(self, agent_id: str) -> bool:
+        """
+        Remove an agent from factory tracking and unregister from registry.
+        
+        Args:
+            agent_id: ID of agent to remove
+            
+        Returns:
+            True if agent was removed, False if not found
+        """
+        if agent_id not in self.created_agents:
+            return False
+        
+        agent = self.created_agents[agent_id]
+        
+        try:
+            # Deactivate agent if still active
+            if agent.is_active:
+                asyncio.run(agent.deactivate())
+            
+            # Remove from factory tracking
+            del self.created_agents[agent_id]
+            
+            # Remove from all teams
+            for team_name, team_agents in self.agent_teams.items():
+                if agent in team_agents:
+                    team_agents.remove(agent)
+            
+            # Unregister from global registry
+            AgentRegistry.unregister(agent_id)
+            
+            if self.logger:
+                self.logger.info(f"Removed agent {agent.name} ({agent_id}) from factory and registry")
+            
+            return True
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to remove agent {agent.name}: {e}")
+            return False
+    
+    def cleanup_all_agents(self) -> int:
+        """
+        Cleanup all agents: deactivate, remove from tracking, and unregister.
+        
+        Returns:
+            Number of agents cleaned up
+        """
+        cleanup_count = 0
+        agent_ids = list(self.created_agents.keys())  # Copy to avoid modification during iteration
+        
+        for agent_id in agent_ids:
+            if self.remove_agent(agent_id):
+                cleanup_count += 1
+        
+        # Clear team tracking
+        self.agent_teams.clear()
+        
+        if self.logger:
+            self.logger.info(f"Cleaned up {cleanup_count} agents and cleared all teams")
+        
+        return cleanup_count
+    
+    def remove_team(self, team_name: str) -> bool:
+        """
+        Remove an entire agent team and cleanup all agents in it.
+        
+        Args:
+            team_name: Name of team to remove
+            
+        Returns:
+            True if team was removed, False if not found
+        """
+        if team_name not in self.agent_teams:
+            return False
+        
+        team_agents = self.agent_teams[team_name]
+        removed_count = 0
+        
+        # Remove all agents in the team
+        for agent in team_agents.copy():  # Copy to avoid modification during iteration
+            if self.remove_agent(agent.agent_id):
+                removed_count += 1
+        
+        # Remove team from tracking
+        del self.agent_teams[team_name]
+        
+        if self.logger:
+            self.logger.info(f"Removed team '{team_name}' with {removed_count} agents")
+        
+        return True
+    
+    def cleanup_inactive_agents(self, max_idle_hours: float = 24.0) -> int:
+        """
+        Cleanup agents that have been inactive for too long.
+        
+        Args:
+            max_idle_hours: Maximum hours an agent can be idle before cleanup
+            
+        Returns:
+            Number of inactive agents cleaned up
+        """
+        import time
+        
+        cleanup_count = 0
+        current_time = time.time()
+        cutoff_time = current_time - (max_idle_hours * 3600)
+        
+        # Find inactive agents
+        inactive_agent_ids = []
+        for agent_id, agent in self.created_agents.items():
+            if (not agent.is_active and 
+                agent.last_task_time and 
+                agent.last_task_time < cutoff_time):
+                inactive_agent_ids.append(agent_id)
+        
+        # Remove inactive agents
+        for agent_id in inactive_agent_ids:
+            if self.remove_agent(agent_id):
+                cleanup_count += 1
+        
+        if cleanup_count > 0 and self.logger:
+            self.logger.info(f"Cleaned up {cleanup_count} inactive agents (idle > {max_idle_hours} hours)")
+        
+        return cleanup_count
+    
+    def get_resource_usage_stats(self) -> Dict[str, Any]:
+        """
+        Get detailed resource usage statistics for monitoring memory leaks.
+        
+        Returns:
+            Dictionary with resource usage statistics
+        """
+        import time
+        
+        active_agents = sum(1 for agent in self.created_agents.values() if agent.is_active)
+        inactive_agents = len(self.created_agents) - active_agents
+        
+        # Calculate memory usage estimation
+        avg_agent_memory_kb = 100  # Rough estimate per agent
+        estimated_memory_kb = len(self.created_agents) * avg_agent_memory_kb
+        
+        # Find oldest and newest agents
+        current_time = time.time()
+        agent_ages = []
+        for agent in self.created_agents.values():
+            if hasattr(agent, 'last_task_time') and agent.last_task_time:
+                age_hours = (current_time - agent.last_task_time) / 3600
+                agent_ages.append(age_hours)
+        
+        oldest_agent_age = max(agent_ages) if agent_ages else 0
+        newest_agent_age = min(agent_ages) if agent_ages else 0
+        avg_agent_age = sum(agent_ages) / len(agent_ages) if agent_ages else 0
+        
+        return {
+            "total_agents": len(self.created_agents),
+            "active_agents": active_agents,
+            "inactive_agents": inactive_agents,
+            "total_teams": len(self.agent_teams),
+            "estimated_memory_usage_kb": estimated_memory_kb,
+            "oldest_agent_age_hours": oldest_agent_age,
+            "newest_agent_age_hours": newest_agent_age,
+            "average_agent_age_hours": avg_agent_age,
+            "agents_by_type": {
+                agent_type.value: len([a for a in self.created_agents.values() if a.agent_type == agent_type])
+                for agent_type in AgentType
+            },
+            "teams_by_size": {
+                team_name: len(agents) for team_name, agents in self.agent_teams.items()
+            }
+        }
+    
+    def __del__(self):
+        """
+        Destructor to ensure proper cleanup when factory is garbage collected.
+        """
+        try:
+            # Attempt to cleanup all agents when factory is destroyed
+            if hasattr(self, 'created_agents') and self.created_agents:
+                self.cleanup_all_agents()
+        except Exception:
+            # Ignore errors during destruction to avoid issues during shutdown
+            pass
+    
     def get_created_agents(self) -> List[Agent]:
         """Get all agents created by this factory."""
         return list(self.created_agents.values())

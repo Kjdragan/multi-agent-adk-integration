@@ -141,6 +141,11 @@ class AgentOrchestrator:
         self.task_queue: List[TaskAllocation] = []
         self.completed_tasks: List[TaskAllocation] = []
         
+        # Resource management settings
+        self.max_completed_tasks_history = 1000  # Limit completed task history
+        self.metrics_cleanup_threshold = 10000   # Cleanup metrics after this many orchestrations
+        self.last_cleanup_time = time.time()
+        
         # Orchestration settings
         self.max_concurrent_tasks = 10
         self.default_timeout_seconds = 300  # 5 minutes
@@ -174,7 +179,8 @@ class AgentOrchestrator:
                               strategy: OrchestrationStrategy = OrchestrationStrategy.ADAPTIVE,
                               requirements: Optional[List[AgentCapability]] = None,
                               context: Optional[Dict[str, Any]] = None,
-                              priority: TaskPriority = TaskPriority.MEDIUM) -> OrchestrationResult:
+                              priority: TaskPriority = TaskPriority.MEDIUM,
+                              timeout_seconds: Optional[int] = None) -> OrchestrationResult:
         """
         Orchestrate a task across multiple agents.
         
@@ -184,6 +190,7 @@ class AgentOrchestrator:
             requirements: Required agent capabilities
             context: Task context
             priority: Task priority
+            timeout_seconds: Optional timeout for task execution
             
         Returns:
             Orchestration result with outcomes from agents
@@ -202,7 +209,7 @@ class AgentOrchestrator:
             priority=priority,
             requirements=requirements or [],
             context=context or {},
-            timeout_seconds=self.default_timeout_seconds,
+            timeout_seconds=timeout_seconds or self.default_timeout_seconds,
         )
         
         try:
@@ -225,11 +232,41 @@ class AgentOrchestrator:
                     error="No suitable agents found for task",
                 )
             
-            # Execute orchestration strategy
+            # Execute orchestration strategy with timeout protection
             self.active_tasks[task_id] = task_allocation
-            orchestration_result = await self._execute_orchestration_strategy(
-                task_allocation, selected_agents
-            )
+            task_allocation.status = "running"
+            task_allocation.start_time = time.time()
+            
+            try:
+                # Apply timeout protection to orchestration execution
+                timeout = task_allocation.timeout_seconds
+                if timeout and timeout > 0:
+                    orchestration_result = await asyncio.wait_for(
+                        self._execute_orchestration_strategy(task_allocation, selected_agents),
+                        timeout=timeout
+                    )
+                else:
+                    orchestration_result = await self._execute_orchestration_strategy(
+                        task_allocation, selected_agents
+                    )
+            except asyncio.TimeoutError:
+                # Handle timeout with proper cleanup
+                orchestration_result = OrchestrationResult(
+                    task_id=task_id,
+                    success=False,
+                    strategy_used=strategy,
+                    agents_used=[agent.agent_id for agent in selected_agents],
+                    primary_result=None,
+                    error=f"Task execution timed out after {timeout} seconds"
+                )
+                
+                if self.logger:
+                    self.logger.warning(f"Task {task_id} timed out after {timeout} seconds")
+                
+                # Update agent workloads (reduce since task was cancelled)
+                for agent in selected_agents:
+                    current_workload = self.agent_workloads.get(agent.agent_id, 0)
+                    self.agent_workloads[agent.agent_id] = max(0, current_workload - 1)
             
             # Update performance metrics
             execution_time = (time.time() - start_time) * 1000
@@ -284,6 +321,59 @@ class AgentOrchestrator:
                 completed_task.end_time = time.time()
                 self.completed_tasks.append(completed_task)
                 del self.active_tasks[task_id]
+            
+            # Periodic resource cleanup
+            self._cleanup_resources_if_needed()
+    
+    def _cleanup_resources_if_needed(self) -> None:
+        """Perform periodic cleanup to prevent memory leaks."""
+        current_time = time.time()
+        
+        # Cleanup every 5 minutes or when metrics reach threshold
+        should_cleanup = (
+            current_time - self.last_cleanup_time > 300 or  # 5 minutes
+            self.total_tasks_orchestrated > self.metrics_cleanup_threshold
+        )
+        
+        if not should_cleanup:
+            return
+        
+        # Limit completed tasks history
+        if len(self.completed_tasks) > self.max_completed_tasks_history:
+            # Keep only the most recent tasks
+            excess_count = len(self.completed_tasks) - self.max_completed_tasks_history
+            self.completed_tasks = self.completed_tasks[excess_count:]
+            
+            if self.logger:
+                self.logger.info(f"Cleaned up {excess_count} old completed tasks")
+        
+        # Reset performance metrics if they grow too large
+        if len(self.agent_performance_scores) > 1000:
+            # Keep only scores above threshold to maintain performance data for active agents
+            filtered_scores = {
+                agent_id: score for agent_id, score in self.agent_performance_scores.items()
+                if score > 0.3  # Keep only agents with decent performance
+            }
+            cleared_count = len(self.agent_performance_scores) - len(filtered_scores)
+            self.agent_performance_scores = filtered_scores
+            
+            if self.logger:
+                self.logger.info(f"Cleaned up {cleared_count} low-performing agent metrics")
+        
+        # Clean up agent workload tracking for inactive agents
+        active_agent_ids = {agent.agent_id for agent in AgentRegistry.get_all_agents() if agent.is_active}
+        workload_keys_to_remove = [
+            agent_id for agent_id in self.agent_workloads.keys()
+            if agent_id not in active_agent_ids
+        ]
+        for agent_id in workload_keys_to_remove:
+            del self.agent_workloads[agent_id]
+            self.agent_availability.pop(agent_id, None)
+        
+        if workload_keys_to_remove and self.logger:
+            self.logger.info(f"Cleaned up workload tracking for {len(workload_keys_to_remove)} inactive agents")
+        
+        self.last_cleanup_time = current_time
     
     async def _determine_optimal_strategy(self, 
                                         task: str,
@@ -566,7 +656,36 @@ class AgentOrchestrator:
                 for agent in agents
             ]
             
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Apply timeout protection to parallel execution
+            timeout = task_allocation.timeout_seconds
+            if timeout and timeout > 0:
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Cancel remaining tasks
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    
+                    # Wait briefly for cancellation to complete
+                    try:
+                        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        pass  # Some tasks may not respond to cancellation
+                    
+                    return OrchestrationResult(
+                        task_id=task_allocation.task_id,
+                        success=False,
+                        strategy_used=task_allocation.strategy,
+                        agents_used=[agent.agent_id for agent in agents],
+                        primary_result=None,
+                        error=f"Parallel execution timed out after {timeout} seconds"
+                    )
+            else:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Process results
             all_results = {}
@@ -621,7 +740,36 @@ class AgentOrchestrator:
                 for agent in agents
             ]
             
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Apply timeout protection to consensus execution
+            timeout = task_allocation.timeout_seconds
+            if timeout and timeout > 0:
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Cancel remaining tasks
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    
+                    # Wait briefly for cancellation to complete
+                    try:
+                        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        pass  # Some tasks may not respond to cancellation
+                    
+                    return OrchestrationResult(
+                        task_id=task_allocation.task_id,
+                        success=False,
+                        strategy_used=task_allocation.strategy,
+                        agents_used=[agent.agent_id for agent in agents],
+                        primary_result=None,
+                        error=f"Consensus execution timed out after {timeout} seconds"
+                    )
+            else:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Process results for consensus
             successful_results = []
@@ -731,7 +879,36 @@ class AgentOrchestrator:
                 for agent in agents
             ]
             
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Apply timeout protection to competitive execution
+            timeout = task_allocation.timeout_seconds
+            if timeout and timeout > 0:
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Cancel remaining tasks
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    
+                    # Wait briefly for cancellation to complete
+                    try:
+                        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        pass  # Some tasks may not respond to cancellation
+                    
+                    return OrchestrationResult(
+                        task_id=task_allocation.task_id,
+                        success=False,
+                        strategy_used=task_allocation.strategy,
+                        agents_used=[agent.agent_id for agent in agents],
+                        primary_result=None,
+                        error=f"Competitive execution timed out after {timeout} seconds"
+                    )
+            else:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Process and evaluate results
             successful_results = []

@@ -16,6 +16,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Import centralized configuration
+from src.config.manager import validate_startup_configuration, get_config_manager
+
 
 def create_argument_parser():
     """Create command line argument parser."""
@@ -116,45 +119,31 @@ def print_banner():
     print(banner)
 
 
-def setup_environment_variables(args):
-    """Setup environment variables for Streamlit."""
-    # Set Streamlit configuration via environment variables
-    env_vars = {
-        "STREAMLIT_SERVER_HOST": args.host,
-        "STREAMLIT_SERVER_PORT": str(args.port),
-        "STREAMLIT_LOGGER_LEVEL": args.log_level.upper(),
+def setup_streamlit_environment(args):
+    """Setup minimal Streamlit-specific environment variables."""
+    # Only set Streamlit-specific variables that don't conflict with app configuration
+    # Use command-line arguments instead of environment variables where possible
+    
+    # Set only essential Streamlit configuration that can't be passed via CLI
+    streamlit_env = {
         "STREAMLIT_CLIENT_TOOLBAR_MODE": "minimal",
-        "STREAMLIT_SERVER_ENABLE_CORS": "true",
+        "STREAMLIT_SERVER_ENABLE_CORS": "true", 
         "STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION": "true",
+        "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
     }
     
-    # Environment-specific settings
+    # Environment-specific Streamlit settings (minimal)
     if args.environment == "development":
-        env_vars.update({
-            "STREAMLIT_SERVER_RUN_ON_SAVE": "true" if args.reload else "false",
-            "STREAMLIT_SERVER_FILE_WATCHER_TYPE": "auto",
-            "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
-        })
+        streamlit_env["STREAMLIT_SERVER_FILE_WATCHER_TYPE"] = "auto"
     elif args.environment == "production":
-        env_vars.update({
-            "STREAMLIT_SERVER_RUN_ON_SAVE": "false",
-            "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
-            "STREAMLIT_SERVER_ENABLE_STATIC_SERVING": "true",
-        })
+        streamlit_env["STREAMLIT_SERVER_ENABLE_STATIC_SERVING"] = "true"
     
-    # Theme setting
-    if args.theme:
-        env_vars["STREAMLIT_THEME_BASE"] = args.theme
-    
-    # Browser setting
-    if args.no_browser:
-        env_vars["STREAMLIT_SERVER_HEADLESS"] = "true"
-    else:
-        env_vars["STREAMLIT_SERVER_HEADLESS"] = "false"
-    
-    # Apply environment variables
-    for key, value in env_vars.items():
+    # Apply only Streamlit-specific environment variables
+    for key, value in streamlit_env.items():
         os.environ[key] = value
+    
+    # Note: Host, port, theme, etc. are now passed via command line arguments
+    # This avoids conflicts with the centralized configuration system
 
 
 def print_startup_info(args):
@@ -228,8 +217,8 @@ def run_streamlit_app(args):
         if args.theme:
             cmd.extend(["--theme.base", args.theme])
         
-        # Set environment variable for the app to know its configuration
-        os.environ["STREAMLIT_ENVIRONMENT"] = args.environment
+        # Configuration is now handled by centralized configuration manager
+        # No need to set STREAMLIT_ENVIRONMENT manually
         
         print("🚀 Starting Streamlit application...")
         print(f"   Command: {' '.join(cmd)}")
@@ -289,6 +278,16 @@ def main():
     # Print banner
     print_banner()
     
+    # Validate configuration early to catch issues
+    print("🔧 Validating configuration...")
+    try:
+        validate_startup_configuration()
+        print("✅ Configuration validation passed")
+    except Exception as e:
+        print(f"❌ Configuration validation failed: {e}")
+        print("\nPlease check your .env file and ensure all required settings are configured.")
+        return 1
+    
     # Check dependencies
     if not check_dependencies():
         return 1
@@ -296,8 +295,8 @@ def main():
     # Print startup info
     print_startup_info(args)
     
-    # Setup environment
-    setup_environment_variables(args)
+    # Setup Streamlit-specific environment (minimal, non-conflicting)
+    setup_streamlit_environment(args)
     
     # Run the application
     return run_streamlit_app(args)

@@ -377,9 +377,10 @@ class GeminiGenerationConfig:
                 "include_thoughts": True
             }
             
-            if thinking_budget != -1:
-                # Manual budget control (future API support)
-                config["thinking_budget_tokens"] = thinking_budget
+            # Note: thinking_budget_tokens not yet supported by Google AI API
+            # Will be added when the API supports manual budget control
+            # if thinking_budget != -1:
+            #     config["thinking_budget_tokens"] = thinking_budget
         
         # Add structured output configuration
         if self.structured_output and self.structured_output.enabled:

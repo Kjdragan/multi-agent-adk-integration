@@ -14,13 +14,13 @@ from dataclasses import dataclass
 os.environ["ENVIRONMENT"] = "test"
 os.environ["LOG_LEVEL"] = "DEBUG"
 
-# Import platform components
-from multi_agent_research_platform.src.config.app import AppConfig
-from multi_agent_research_platform.src.platform_logging import RunLogger
-from multi_agent_research_platform.src.services import SessionService, MemoryService, ArtifactService
-from multi_agent_research_platform.src.agents.factory import AgentFactory
-from multi_agent_research_platform.src.agents.orchestrator import AgentOrchestrator
-from multi_agent_research_platform.src.agents.base import Agent, AgentResult, AgentCapability, AgentRegistry
+# Import platform components with correct paths
+from src.config.app import AppConfig
+from src.platform_logging import RunLogger
+from src.services import SessionService, MemoryService, ArtifactService
+from src.agents.factory import AgentFactory
+from src.agents.orchestrator import AgentOrchestrator
+from src.agents.base import Agent, AgentResult, AgentCapability, AgentRegistry
 
 
 @dataclass
@@ -75,12 +75,30 @@ def pytest_collection_modifyitems(config, items):
 
 
 # Async test event loop configuration
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def event_loop():
     """Create event loop for async tests."""
+    # Create new event loop for each test to avoid state leakage
     loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        yield loop
+    finally:
+        # Proper cleanup of pending tasks
+        try:
+            # Cancel all pending tasks
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            
+            # Wait for cancellation to complete
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass  # Don't fail tests due to cleanup issues
+        finally:
+            loop.close()
 
 
 # Configuration fixtures
@@ -122,8 +140,19 @@ def app_config():
 @pytest.fixture(scope="function")
 async def test_session_service():
     """Provide session service for testing."""
-    session_service = SessionService()
-    yield session_service
+    from src.services.session import InMemorySessionService
+    
+    session_service = InMemorySessionService()
+    
+    try:
+        await session_service.start()  # Proper initialization
+        yield session_service
+    finally:
+        # Proper cleanup
+        try:
+            await session_service.stop()
+        except Exception:
+            pass  # Don't fail tests due to cleanup issues
 
 
 @pytest.fixture(scope="function")
@@ -132,11 +161,69 @@ def temp_database_file():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     
-    yield db_path
+    # Track open connections for cleanup
+    connections = []
     
-    # Cleanup
-    if os.path.exists(db_path):
-        os.unlink(db_path)
+    try:
+        yield db_path
+    finally:
+        # Close any open connections to the database
+        try:
+            # Close all SQLite connections to this file
+            import gc
+            for obj in gc.get_objects():
+                if isinstance(obj, sqlite3.Connection):
+                    try:
+                        if hasattr(obj, 'execute'):
+                            obj.close()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        
+        # Remove the database file
+        try:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+        except PermissionError:
+            # On Windows, file might still be locked
+            import time
+            time.sleep(0.1)
+            try:
+                if os.path.exists(db_path):
+                    os.unlink(db_path)
+            except Exception:
+                pass  # Don't fail tests due to cleanup issues
+
+
+@pytest.fixture(scope="function", autouse=True)
+def reset_agent_registry():
+    """Reset agent registry between tests to prevent interference."""
+    # Clear the registry before each test
+    try:
+        AgentRegistry.clear_all()
+    except Exception:
+        pass  # Registry might not be initialized yet
+    
+    yield
+    
+    # Clean up after test
+    try:
+        # Get all agents and properly clean them up
+        agents = AgentRegistry.get_all_agents()
+        for agent in agents:
+            try:
+                if hasattr(agent, 'cleanup'):
+                    agent.cleanup()
+                if hasattr(agent, 'deactivate'):
+                    agent.deactivate()
+            except Exception:
+                pass  # Don't fail tests due to cleanup issues
+        
+        # Clear the registry
+        AgentRegistry.clear_all()
+    except Exception:
+        pass  # Don't fail tests due to cleanup issues
 
 
 # Mock fixtures
