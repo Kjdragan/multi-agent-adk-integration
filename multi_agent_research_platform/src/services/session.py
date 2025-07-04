@@ -567,10 +567,24 @@ class DatabaseSessionService(SessionService):
             await self._return_connection(connection)
     
     async def _cleanup_storage(self) -> None:
-        """Close database connection."""
-        if self._connection:
-            await self._connection.close()
-            self._connection = None
+        """Close all database connections in the pool."""
+        async with self._db_lock:
+            # Close all connections in pool
+            for connection in self._connection_pool:
+                try:
+                    await connection.close()
+                except Exception:
+                    pass  # Connection might already be closed
+            
+            self._connection_pool.clear()
+            
+            # Close main connection if it exists
+            if self._connection:
+                try:
+                    await self._connection.close()
+                except Exception:
+                    pass
+                self._connection = None
     
     async def _cleanup_test_session(self, session: Session) -> None:
         """Remove test session from database."""
@@ -578,9 +592,9 @@ class DatabaseSessionService(SessionService):
     
     async def create_session(self, app_name: str, user_id: str, session_id: str,
                            state: Optional[Dict[str, Any]] = None) -> Session:
-        """Create a new session in database."""
-        async with self._db_lock:
-            cursor = await self._connection.cursor()
+        """Create a new session in database with proper transaction management."""
+        async def _create_session_operation(connection: aiosqlite.Connection):
+            cursor = await connection.cursor()
             
             state_json = json.dumps(state or {})
             now = datetime.utcnow()
@@ -591,8 +605,6 @@ class DatabaseSessionService(SessionService):
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (app_name, user_id, session_id, state_json, now, now))
             
-            await self._connection.commit()
-            
             # Create session object
             session = Session(
                 app_name=app_name,
@@ -602,13 +614,17 @@ class DatabaseSessionService(SessionService):
                 events=[],
                 last_update_time=now
             )
-            
-            # Load existing events
-            await self._load_session_events(session)
-            
-            # Cache with consistency check
-            await self._update_cache(session_id, session)
             return session
+        
+        # Use transaction wrapper
+        session = await self._execute_with_transaction(_create_session_operation)
+        
+        # Load existing events (outside transaction)
+        await self._load_session_events(session)
+        
+        # Cache with consistency check
+        await self._update_cache(session_id, session)
+        return session
     
     async def get_session(self, app_name: str, user_id: str, session_id: str) -> Optional[Session]:
         """Get session from database."""

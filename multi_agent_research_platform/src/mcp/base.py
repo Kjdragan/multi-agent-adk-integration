@@ -150,7 +150,7 @@ class MCPServerResult:
 
 
 class RateLimiter:
-    """Rate limiter for MCP server requests."""
+    """Rate limiter for MCP server requests with memory management."""
     
     def __init__(self, 
                  requests_per_minute: int = 60,
@@ -158,9 +158,14 @@ class RateLimiter:
         self.requests_per_minute = requests_per_minute
         self.requests_per_hour = requests_per_hour
         
-        # Track requests
+        # Track requests with memory limits
         self.minute_requests: List[datetime] = []
         self.hour_requests: List[datetime] = []
+        
+        # Memory management settings
+        self.max_tracked_requests = max(requests_per_hour * 2, 2000)  # Reasonable buffer
+        self.last_cleanup = datetime.utcnow()
+        self.cleanup_interval = timedelta(minutes=5)  # Cleanup every 5 minutes
         
         # Lock for thread safety
         self._lock = asyncio.Lock()
@@ -170,10 +175,16 @@ class RateLimiter:
         async with self._lock:
             now = datetime.utcnow()
             
+            # Periodic cleanup to prevent memory bloat
+            if now - self.last_cleanup > self.cleanup_interval:
+                await self._cleanup_old_requests(now)
+                self.last_cleanup = now
+            
             # Clean old requests
             minute_ago = now - timedelta(minutes=1)
             hour_ago = now - timedelta(hours=1)
             
+            # Efficient filtering using list comprehension
             self.minute_requests = [req for req in self.minute_requests if req > minute_ago]
             self.hour_requests = [req for req in self.hour_requests if req > hour_ago]
             
@@ -182,6 +193,40 @@ class RateLimiter:
             hour_ok = len(self.hour_requests) < self.requests_per_hour
             
             return minute_ok and hour_ok
+    
+    async def _cleanup_old_requests(self, now: datetime) -> None:
+        """Deep cleanup of old request tracking data."""
+        try:
+            # Remove very old requests (older than 2 hours)
+            two_hours_ago = now - timedelta(hours=2)
+            
+            # Clean minute requests
+            original_minute_count = len(self.minute_requests)
+            self.minute_requests = [req for req in self.minute_requests if req > two_hours_ago]
+            
+            # Clean hour requests
+            original_hour_count = len(self.hour_requests)
+            self.hour_requests = [req for req in self.hour_requests if req > two_hours_ago]
+            
+            # If still too many requests, keep only the most recent ones
+            if len(self.hour_requests) > self.max_tracked_requests:
+                self.hour_requests = sorted(self.hour_requests)[-self.max_tracked_requests:]
+            
+            if len(self.minute_requests) > self.requests_per_minute * 2:
+                self.minute_requests = sorted(self.minute_requests)[-self.requests_per_minute * 2:]
+            
+            # Log if significant cleanup occurred
+            minute_cleaned = original_minute_count - len(self.minute_requests)
+            hour_cleaned = original_hour_count - len(self.hour_requests)
+            
+            if minute_cleaned > 0 or hour_cleaned > 0:
+                # Would log here if we had access to logger
+                pass
+                
+        except Exception:
+            # If cleanup fails, reset tracking to prevent memory issues
+            self.minute_requests.clear()
+            self.hour_requests.clear()
     
     async def record_request(self) -> None:
         """Record a successful request."""
@@ -200,13 +245,88 @@ class RateLimiter:
         return time.time() - start_time
 
 
-class MCPCache:
-    """Simple in-memory cache for MCP server responses."""
+class CircuitBreaker:
+    """Circuit breaker pattern for MCP server fault tolerance."""
     
-    def __init__(self, ttl_seconds: int = 300):
-        self.ttl_seconds = ttl_seconds
-        self.cache: Dict[str, Dict[str, Any]] = {}
+    def __init__(self, 
+                 failure_threshold: int = 5,
+                 timeout_seconds: int = 60,
+                 expected_exception: Exception = Exception):
+        self.failure_threshold = failure_threshold
+        self.timeout_seconds = timeout_seconds
+        self.expected_exception = expected_exception
+        
+        # State tracking
+        self.failure_count = 0
+        self.last_failure_time: Optional[datetime] = None
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
         self._lock = asyncio.Lock()
+    
+    async def call(self, func, *args, **kwargs):
+        """Execute function with circuit breaker protection."""
+        async with self._lock:
+            if self.state == "OPEN":
+                if self._should_attempt_reset():
+                    self.state = "HALF_OPEN"
+                else:
+                    raise Exception(f"Circuit breaker is OPEN. Failing fast.")
+            
+            try:
+                result = await func(*args, **kwargs)
+                await self._on_success()
+                return result
+            except self.expected_exception as e:
+                await self._on_failure()
+                raise
+    
+    def _should_attempt_reset(self) -> bool:
+        """Check if enough time has passed to attempt reset."""
+        if self.last_failure_time is None:
+            return True
+        
+        time_since_failure = datetime.utcnow() - self.last_failure_time
+        return time_since_failure.total_seconds() >= self.timeout_seconds
+    
+    async def _on_success(self) -> None:
+        """Reset circuit breaker on successful call."""
+        self.failure_count = 0
+        self.state = "CLOSED"
+    
+    async def _on_failure(self) -> None:
+        """Handle failure and update circuit breaker state."""
+        self.failure_count += 1
+        self.last_failure_time = datetime.utcnow()
+        
+        if self.failure_count >= self.failure_threshold:
+            self.state = "OPEN"
+    
+    def get_state(self) -> Dict[str, Any]:
+        """Get current circuit breaker state."""
+        return {
+            "state": self.state,
+            "failure_count": self.failure_count,
+            "failure_threshold": self.failure_threshold,
+            "last_failure_time": self.last_failure_time.isoformat() if self.last_failure_time else None,
+            "timeout_seconds": self.timeout_seconds
+        }
+
+
+class MCPCache:
+    """Memory-managed in-memory cache for MCP server responses."""
+    
+    def __init__(self, ttl_seconds: int = 300, max_size: int = 1000):
+        self.ttl_seconds = ttl_seconds
+        self.max_size = max_size
+        self.cache: Dict[str, Dict[str, Any]] = {}
+        self._access_times: Dict[str, datetime] = {}  # Track access for LRU
+        self._lock = asyncio.Lock()
+        self.cleanup_threshold = max_size // 4  # Cleanup when 25% full
+        self.stats = {
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+            "cleanups": 0
+        }
     
     def _generate_key(self, server_name: str, operation: str, params: Dict[str, Any]) -> str:
         """Generate cache key from request parameters."""
@@ -224,17 +344,32 @@ class MCPCache:
                 
                 # Check if expired
                 if time.time() - cached_item["timestamp"] < self.ttl_seconds:
+                    # Update access time for LRU
+                    self._access_times[key] = datetime.utcnow()
+                    self.stats["hits"] += 1
                     return cached_item["data"]
                 else:
                     # Remove expired item
-                    del self.cache[key]
+                    await self._remove_item(key)
             
+            self.stats["misses"] += 1
             return None
     
+    async def _remove_item(self, key: str) -> None:
+        """Remove item from cache and access tracking."""
+        if key in self.cache:
+            del self.cache[key]
+        if key in self._access_times:
+            del self._access_times[key]
+    
     async def set(self, server_name: str, operation: str, params: Dict[str, Any], data: Any) -> None:
-        """Cache result data."""
+        """Cache result data with memory management."""
         async with self._lock:
             key = self._generate_key(server_name, operation, params)
+            
+            # Check if cache needs cleanup before adding new item
+            if len(self.cache) >= self.max_size:
+                await self._evict_lru_items()
             
             self.cache[key] = {
                 "data": data,
@@ -242,6 +377,39 @@ class MCPCache:
                 "server_name": server_name,
                 "operation": operation,
             }
+            self._access_times[key] = datetime.utcnow()
+            
+            # Periodic cleanup
+            if len(self.cache) % self.cleanup_threshold == 0:
+                await self._cleanup_expired()
+    
+    async def _evict_lru_items(self) -> None:
+        """Evict least recently used items to make space."""
+        if not self._access_times:
+            return
+        
+        # Sort by access time and remove oldest 25%
+        items_to_remove = len(self.cache) // 4
+        sorted_items = sorted(self._access_times.items(), key=lambda x: x[1])
+        
+        for key, _ in sorted_items[:items_to_remove]:
+            await self._remove_item(key)
+            self.stats["evictions"] += 1
+    
+    async def _cleanup_expired(self) -> None:
+        """Remove expired cache entries."""
+        now = time.time()
+        expired_keys = []
+        
+        for key, cached_item in self.cache.items():
+            if now - cached_item["timestamp"] >= self.ttl_seconds:
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            await self._remove_item(key)
+        
+        if expired_keys:
+            self.stats["cleanups"] += 1
     
     async def clear_expired(self) -> int:
         """Clear expired cache entries, return count cleared."""

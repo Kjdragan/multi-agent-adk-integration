@@ -356,33 +356,99 @@ class InMemoryMemoryService(MemoryService):
             return False
     
     async def _cleanup_old_entries(self, app_name: str) -> None:
-        """Remove old memory entries based on retention policy."""
+        """Remove old memory entries based on retention policy with memory management."""
         if not self.config.auto_cleanup_enabled:
+            return
+        
+        if app_name not in self._storage:
             return
         
         cutoff_date = datetime.utcnow() - timedelta(days=self.config.memory_retention_days)
         cutoff_iso = cutoff_date.isoformat()
+        max_entries = self.config.max_memory_entries
         
         entries = self._storage[app_name]
         original_count = len(entries)
         
         # Filter out old entries
-        self._storage[app_name] = [
-            entry for entry in entries
-            if entry['created_at'] > cutoff_iso
-        ]
+        valid_entries = []
+        for entry in entries:
+            try:
+                if entry.get('created_at', '') > cutoff_iso:
+                    valid_entries.append(entry)
+            except (KeyError, TypeError):
+                # Invalid entry structure - skip it
+                continue
         
-        # Rebuild keyword index for this app
+        # Limit total entries if still too many
+        if len(valid_entries) > max_entries:
+            # Sort by creation date and keep most recent
+            try:
+                valid_entries.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+                valid_entries = valid_entries[:max_entries]
+            except (KeyError, TypeError):
+                # If sorting fails, just truncate
+                valid_entries = valid_entries[-max_entries:]
+        
+        # Update storage
+        self._storage[app_name] = valid_entries
+        
+        # Efficiently rebuild keyword index for this app
         self._keyword_index[app_name] = {}
-        for entry in self._storage[app_name]:
-            for keyword in entry['keywords']:
-                if keyword not in self._keyword_index[app_name]:
-                    self._keyword_index[app_name][keyword] = []
-                self._keyword_index[app_name][keyword].append(entry['id'])
+        for entry in valid_entries:
+            try:
+                entry_id = entry.get('id')
+                keywords = entry.get('keywords', [])
+                if entry_id:
+                    for keyword in keywords:
+                        if keyword not in self._keyword_index[app_name]:
+                            self._keyword_index[app_name][keyword] = []
+                        self._keyword_index[app_name][keyword].append(entry_id)
+            except (KeyError, TypeError):
+                continue  # Skip malformed entries
         
-        removed_count = original_count - len(self._storage[app_name])
+        # Periodic deep cleanup of global storage
+        await self._periodic_deep_cleanup()
+        
+        removed_count = original_count - len(valid_entries)
         if removed_count > 0:
             self._log_info(f"Cleaned up {removed_count} old memory entries for {app_name}")
+    
+    async def _periodic_deep_cleanup(self) -> None:
+        """Perform periodic deep cleanup of the entire memory system."""
+        try:
+            # Check if we need deep cleanup (every 1000 operations or so)
+            total_entries = sum(len(entries) for entries in self._storage.values())
+            if total_entries > 50000:  # Arbitrary large number
+                self._log_info(f"Performing deep cleanup - total entries: {total_entries}")
+                
+                # Clean up apps with no entries
+                empty_apps = [app for app, entries in self._storage.items() if not entries]
+                for app in empty_apps:
+                    del self._storage[app]
+                    if app in self._keyword_index:
+                        del self._keyword_index[app]
+                
+                # Limit number of apps to prevent unbounded growth
+                if len(self._storage) > 100:  # Arbitrary limit
+                    # Keep only most active apps (by entry count)
+                    app_sizes = [(app, len(entries)) for app, entries in self._storage.items()]
+                    app_sizes.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Keep top 50 apps
+                    apps_to_keep = {app for app, _ in app_sizes[:50]}
+                    
+                    # Remove others
+                    apps_to_remove = set(self._storage.keys()) - apps_to_keep
+                    for app in apps_to_remove:
+                        del self._storage[app]
+                        if app in self._keyword_index:
+                            del self._keyword_index[app]
+                    
+                    self._log_info(f"Deep cleanup removed {len(apps_to_remove)} inactive apps")
+                
+        except Exception as e:
+            self._log_error(f"Deep cleanup failed: {e}")
 
 
 class DatabaseMemoryService(MemoryService):
