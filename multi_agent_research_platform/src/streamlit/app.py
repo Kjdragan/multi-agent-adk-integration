@@ -435,14 +435,34 @@ class StreamlitApp:
     def _execute_research_task(self, task: str, strategy: OrchestrationStrategy, 
                               priority: TaskPriority, timeout: int, include_context: bool):
         """Execute a research task using agent orchestration."""
+        
+        # Start comprehensive logging
+        self.logger.info("="*60)
+        self.logger.info(f"🚀 STARTING TASK EXECUTION")
+        self.logger.info(f"Task: {task}")
+        self.logger.info(f"Strategy: {strategy.value}")
+        self.logger.info(f"Priority: {priority.value}")
+        self.logger.info(f"Timeout: {timeout}s")
+        self.logger.info(f"Include context: {include_context}")
+        
         try:
             with st.spinner("🤖 Agents are working on your task..."):
+                # Log available agents
+                agents = AgentRegistry.get_all_agents()
+                self.logger.info(f"Available agents: {len(agents)}")
+                for agent in agents:
+                    self.logger.info(f"  - {agent.name} ({agent.agent_type.value})")
+                
                 # Prepare context
                 context = {}
                 if include_context and st.session_state.task_history:
                     context["previous_tasks"] = st.session_state.task_history[-3:]  # Last 3 tasks
+                    self.logger.info(f"Including {len(context['previous_tasks'])} previous tasks in context")
                 
-                # Execute task
+                self.logger.info("📋 Starting orchestration...")
+                
+                # Execute task with detailed logging
+                start_time = datetime.now()
                 result = asyncio.run(
                     self.orchestrator.orchestrate_task(
                         task=task,
@@ -452,6 +472,22 @@ class StreamlitApp:
                         timeout_seconds=timeout
                     )
                 )
+                end_time = datetime.now()
+                execution_time = (end_time - start_time).total_seconds()
+                
+                self.logger.info(f"✅ Orchestration completed in {execution_time:.2f}s")
+                self.logger.info(f"Result success: {result.success}")
+                if hasattr(result, 'primary_result'):
+                    result_preview = str(result.primary_result)[:200] + "..." if len(str(result.primary_result)) > 200 else str(result.primary_result)
+                    self.logger.info(f"Result preview: {result_preview}")
+                
+                if hasattr(result, 'agent_results'):
+                    self.logger.info(f"Agent results count: {len(result.agent_results) if result.agent_results else 0}")
+                    if result.agent_results:
+                        for i, agent_result in enumerate(result.agent_results):
+                            self.logger.info(f"  Agent {i+1}: success={agent_result.success}")
+                            if not agent_result.success and hasattr(agent_result, 'error'):
+                                self.logger.error(f"  Agent {i+1} error: {agent_result.error}")
                 
                 # Store results
                 task_record = {
@@ -474,8 +510,27 @@ class StreamlitApp:
                 # Display results
                 self._display_task_result(task_record)
                 
+                self.logger.info("🎉 TASK EXECUTION COMPLETED SUCCESSFULLY")
+                self.logger.info("="*60)
+                
         except Exception as e:
+            self.logger.error("="*60)
+            self.logger.error(f"❌ TASK EXECUTION FAILED")
+            self.logger.error(f"Error: {e}")
+            self.logger.error(f"Error type: {type(e).__name__}")
+            
+            import traceback
+            full_traceback = traceback.format_exc()
+            self.logger.error(f"Full traceback:\n{full_traceback}")
+            
+            # Also print to console for immediate visibility
+            print(f"\n🚨 TASK EXECUTION ERROR:")
+            print(f"Task: {task}")
+            print(f"Error: {e}")
+            print(f"Traceback:\n{full_traceback}")
+            
             st.error(f"Task execution failed: {e}")
+            self.logger.error("="*60)
     
     def _display_task_result(self, task_record: Dict):
         """Display task execution results."""

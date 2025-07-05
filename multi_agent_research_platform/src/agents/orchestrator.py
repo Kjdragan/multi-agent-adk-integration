@@ -622,8 +622,38 @@ class AgentOrchestrator:
         """Execute task with single best agent."""
         agent = agents[0]
         
+        if self.logger:
+            self.logger.info(f"🎯 EXECUTING SINGLE BEST STRATEGY")
+            self.logger.info(f"Selected agent: {agent.name} ({agent.agent_id})")
+            self.logger.info(f"Agent type: {agent.agent_type.value}")
+            self.logger.info(f"Task: {task_allocation.task}")
+            if hasattr(agent, 'adk_agent'):
+                self.logger.info(f"ADK agent available: {agent.adk_agent is not None}")
+            if hasattr(agent, 'runner'):
+                self.logger.info(f"ADK runner available: {agent.runner is not None}")
+        
         try:
+            if self.logger:
+                self.logger.info(f"🚀 Calling agent.execute_task...")
+            
+            import time
+            start_time = time.time()
             result = await agent.execute_task(task_allocation.task, task_allocation.context)
+            execution_time = time.time() - start_time
+            
+            if self.logger:
+                self.logger.info(f"✅ Agent execution completed in {execution_time:.2f}s")
+                self.logger.info(f"Result success: {result.success}")
+                if result.success:
+                    result_preview = str(result.result)[:300] + "..." if len(str(result.result)) > 300 else str(result.result)
+                    self.logger.info(f"Result preview: {result_preview}")
+                    if hasattr(result, 'tools_used') and result.tools_used:
+                        self.logger.info(f"Tools used: {result.tools_used}")
+                    if hasattr(result, 'execution_time_ms'):
+                        self.logger.info(f"Agent reported execution time: {result.execution_time_ms}ms")
+                else:
+                    if hasattr(result, 'error'):
+                        self.logger.error(f"Agent execution error: {result.error}")
             
             return OrchestrationResult(
                 task_id=task_allocation.task_id,
@@ -632,10 +662,24 @@ class AgentOrchestrator:
                 agents_used=[agent.agent_id],
                 primary_result=result.result,
                 all_results={agent.agent_id: result.to_dict()},
-                metadata={"single_agent_execution": True},
+                metadata={
+                    "single_agent_execution": True,
+                    "execution_time_seconds": execution_time,
+                    "agent_name": agent.name,
+                    "agent_type": agent.agent_type.value
+                },
             )
             
         except Exception as e:
+            if self.logger:
+                self.logger.error(f"❌ AGENT EXECUTION EXCEPTION")
+                self.logger.error(f"Exception type: {type(e).__name__}")
+                self.logger.error(f"Exception message: {str(e)}")
+                
+                import traceback
+                full_traceback = traceback.format_exc()
+                self.logger.error(f"Full traceback:\n{full_traceback}")
+            
             return OrchestrationResult(
                 task_id=task_allocation.task_id,
                 success=False,
@@ -643,6 +687,12 @@ class AgentOrchestrator:
                 agents_used=[agent.agent_id],
                 primary_result=None,
                 error=str(e),
+                metadata={
+                    "single_agent_execution": True,
+                    "exception_type": type(e).__name__,
+                    "agent_name": agent.name,
+                    "agent_type": agent.agent_type.value
+                }
             )
     
     async def _execute_parallel_all(self, 
