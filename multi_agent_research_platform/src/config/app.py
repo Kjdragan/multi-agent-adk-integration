@@ -7,7 +7,12 @@ from typing import List, Optional
 from pydantic import Field, field_validator
 
 from .base import BaseConfig, SecuritySettings, FeatureFlags, APIKeySettings
-from ..platform_logging.models import LogConfig
+
+# Handle import context - works both as relative and absolute import
+try:
+    from ..platform_logging.models import LogConfig
+except ImportError:
+    from src.platform_logging.models import LogConfig
 
 
 class ServerConfig(BaseConfig):

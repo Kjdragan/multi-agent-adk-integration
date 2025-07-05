@@ -14,8 +14,6 @@ from typing import Any, Dict, List, Optional, Union
 from enum import Enum
 
 from google.adk.agents import Agent as ADKAgent
-from google import genai
-from google.genai.types import GenerateContentConfig, ThinkingConfig, HttpOptions
 
 from .base import Agent, AgentType, AgentCapability, AgentResult
 from ..platform_logging import RunLogger
@@ -26,7 +24,7 @@ from ..config.gemini_models import (
     ThinkingBudgetConfig, StructuredOutputConfig, select_model_for_task,
     analyze_task_complexity, get_model_config
 )
-from ..config.manager import require_google_api_key, get_config_manager
+from ..config.manager import get_config_manager
 
 
 class LLMRole(str, Enum):
@@ -305,17 +303,12 @@ class LLMAgent(Agent):
 
 You have access to various tools and can search for information when needed. Always strive for accuracy and cite your sources when possible.""".strip()
             
-            # Determine model for ADK agent
-            if self.config.auto_optimize_model:
-                # For ADK agent creation, use a default task to determine model
-                sample_task = f"General {self.config.role.value} task"
-                generation_config = select_model_for_task(
-                    task=sample_task,
-                    preferences=self.config.get_model_preferences()
-                )
-                model_id = generation_config.model.model_id.value
+            # Determine model for ADK agent - use simple model names that ADK expects
+            if self.config.model:
+                model_id = self.config.model.value
             else:
-                model_id = self.config.model.value if self.config.model else GeminiModel.FLASH.value
+                # Default to Flash model
+                model_id = GeminiModel.FLASH.value
             
             # Create ADK agent
             self.adk_agent = ADKAgent(
@@ -378,14 +371,17 @@ You have access to various tools and can search for information when needed. Alw
             
             # Execute with ADK agent
             if self.adk_agent:
-                # This would be the actual ADK execution
-                # For now, we'll simulate the response
-                response = await self._simulate_llm_response(enhanced_task, context_info)
-                tools_used.append("adk_gemini")
+                # Use the actual ADK agent to execute the task
+                response = await self.adk_agent.generate_content(enhanced_task)
+                tools_used.append("adk_agent")
             else:
-                # Fallback to direct LLM call
-                response = await self._direct_llm_call(enhanced_task, context_info)
-                tools_used.append("direct_llm")
+                # Create ADK agent if not exists
+                self._create_adk_agent()
+                if self.adk_agent:
+                    response = await self.adk_agent.generate_content(enhanced_task)
+                    tools_used.append("adk_agent")
+                else:
+                    raise RuntimeError("Failed to create ADK agent and no fallback available")
             
             # Store result in memory if enabled
             if self.config.enable_memory and self.memory_service:
@@ -579,413 +575,4 @@ You have access to various tools and can search for information when needed. Alw
                 memory_context += f"- {memory.get('text', '')[:200]}...\n"
             enhanced_task += memory_context
         
-        return enhanced_task
-    
-    async def _simulate_llm_response(self, 
-                                   task: str, 
-                                   context: Dict[str, Any]) -> str:
-        """
-        Generate LLM response using Google GenAI SDK with Gemini 2.5 models.
-        
-        Uses intelligent model selection, thinking budgets, and structured output
-        based on task complexity and agent configuration.
-        """
-        try:
-            # Get model preferences from config
-            preferences = self.config.get_model_preferences()
-            
-            # Analyze task and select optimal model configuration
-            if self.config.auto_optimize_model:
-                generation_config = select_model_for_task(
-                    task=task,
-                    context=context,
-                    preferences=preferences
-                )
-            else:
-                # Use specified model or default
-                model_id = self.config.model or GeminiModel.FLASH
-                model_config = get_model_config(model_id)
-                
-                # Create thinking config
-                thinking_config = None
-                if (self.config.enable_thinking and 
-                    model_config.supports_thinking):
-                    
-                    thinking_config = ThinkingBudgetConfig(
-                        enabled=True,
-                        budget_tokens=self.config.thinking_budget or -1  # Auto mode
-                    )
-                
-                # Create structured output config
-                structured_config = None
-                if (self.config.enable_structured_output and 
-                    ModelCapability.STRUCTURED_OUTPUT in model_config.capabilities):
-                    
-                    if self.config.output_schema_type == "analysis":
-                        schema = StructuredOutputConfig.get_analysis_schema()
-                    elif self.config.output_schema_type == "research":
-                        schema = StructuredOutputConfig.get_research_schema()
-                    else:
-                        schema = self.config.custom_output_schema
-                    
-                    if schema:
-                        structured_config = StructuredOutputConfig(
-                            enabled=True,
-                            response_schema=schema
-                        )
-                
-                generation_config = GeminiGenerationConfig(
-                    model=model_config,
-                    temperature=self.config.temperature,
-                    top_p=self.config.top_p,
-                    top_k=self.config.top_k,
-                    thinking_config=thinking_config,
-                    structured_output=structured_config,
-                    system_instruction=self.config.get_full_system_instruction()
-                )
-            
-            # Create Google GenAI client with proper API key
-            api_key = require_google_api_key()
-            client = genai.Client(
-                api_key=api_key,
-                http_options=HttpOptions(api_version="v1")
-            )
-            
-            # Prepare generation config for API
-            api_config = generation_config.to_generate_content_config()
-            
-            # Add system instruction if provided - correct format for Google AI API
-            if generation_config.system_instruction:
-                # The Google AI API expects system instructions as part of the contents, not as a separate field
-                # We'll handle this in the generate_content call instead
-                pass
-            
-            # Log model selection if logger available
-            if self.logger:
-                self.logger.info(
-                    f"Using {generation_config.model.name} for task complexity analysis. "
-                    f"Thinking: {generation_config.thinking_config.enabled if generation_config.thinking_config else False}, "
-                    f"Structured: {generation_config.structured_output.enabled if generation_config.structured_output else False}"
-                )
-            
-            # Validate API configuration
-            if not await self._validate_api_config(generation_config):
-                raise ValueError("Invalid API configuration")
-            
-            # Prepare contents with proper system instruction format
-            contents = await self._format_api_contents(task, generation_config.system_instruction)
-            
-            # Generate response with rate limiting and retry
-            async def make_api_call():
-                return await client.models.generate_content(
-                    model=generation_config.model.model_id.value,
-                    contents=contents,
-                    config=GenerateContentConfig(**api_config)
-                )
-            
-            response = await self._rate_limited_api_call(make_api_call)
-            
-            # Extract response text
-            response_text = response.text
-            
-            # Update token usage metrics if available
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                self.total_tokens_used += (
-                    response.usage_metadata.prompt_token_count + 
-                    response.usage_metadata.candidates_token_count
-                )
-            
-            # Log thinking process if enabled and available
-            if (generation_config.thinking_config and 
-                generation_config.thinking_config.enabled and 
-                self.logger):
-                
-                # Check for thinking content in response
-                for candidate in response.candidates:
-                    for part in candidate.content.parts:
-                        if hasattr(part, 'thought') and part.thought:
-                            self.logger.debug(f"Model thinking process: {part.text[:200]}...")
-            
-            return response_text
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"LLM response generation failed: {e}")
-            
-            # Fallback to direct LLM call
-            return await self._direct_llm_call(task, context)
-    
-    async def _direct_llm_call(self, 
-                             task: str, 
-                             context: Dict[str, Any]) -> str:
-        """
-        Direct LLM call fallback using basic Gemini configuration.
-        
-        Used when ADK agent creation fails or as a fallback method.
-        """
-        try:
-            # Use Flash model as reliable fallback
-            model_config = get_model_config(GeminiModel.FLASH)
-            
-            # Create basic generation config
-            generation_config = GeminiGenerationConfig(
-                model=model_config,
-                temperature=self.config.temperature,
-                top_p=self.config.top_p,
-                top_k=self.config.top_k,
-                system_instruction=self.config.get_full_system_instruction()
-            )
-            
-            # Create client with proper API key
-            api_key = require_google_api_key()
-            client = genai.Client(
-                api_key=api_key,
-                http_options=HttpOptions(api_version="v1")
-            )
-            
-            # Prepare task with role context and system instruction
-            enhanced_task = f"As a {self.config.role.value} agent, {task}"
-            
-            # Prepare contents with proper system instruction format
-            contents = await self._format_api_contents(enhanced_task, generation_config.system_instruction)
-            
-            if self.logger:
-                self.logger.info(f"Direct LLM fallback using {model_config.name}")
-            
-            # Generate response with rate limiting and retry
-            async def make_fallback_call():
-                return await client.models.generate_content(
-                    model=generation_config.model.model_id.value,
-                    contents=contents,
-                    config=GenerateContentConfig(
-                        temperature=generation_config.temperature,
-                        top_p=generation_config.top_p,
-                        top_k=generation_config.top_k
-                    )
-                )
-            
-            response = await self._rate_limited_api_call(make_fallback_call)
-            
-            # Update token usage
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                self.total_tokens_used += (
-                    response.usage_metadata.prompt_token_count + 
-                    response.usage_metadata.candidates_token_count
-                )
-            
-            return response.text
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Direct LLM call failed: {e}")
-            
-            # Ultimate fallback - return error message
-            role = self.config.role.value
-            return f"I apologize, but I encountered an error while processing your request as a {role} agent. The error was: {str(e)[:100]}. Please try again or contact support if this issue persists."
-    
-    async def _rate_limited_api_call(self, api_call_func, *args, **kwargs):
-        """Execute API call with rate limiting and retry logic."""
-        # Rate limiting
-        current_time = time.time()
-        time_since_last_call = current_time - self._last_api_call_time
-        if time_since_last_call < self._rate_limit_delay:
-            await asyncio.sleep(self._rate_limit_delay - time_since_last_call)
-        
-        for attempt in range(self._max_retries + 1):
-            try:
-                # Update rate limiting tracking
-                self._last_api_call_time = time.time()
-                self._api_call_count += 1
-                
-                # Execute API call
-                result = await api_call_func(*args, **kwargs)
-                
-                if self.logger and attempt > 0:
-                    self.logger.info(f"API call succeeded on attempt {attempt + 1}")
-                
-                return result
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                # Check for rate limiting errors
-                if "rate limit" in error_msg or "quota" in error_msg or "429" in error_msg:
-                    if attempt < self._max_retries:
-                        delay = self._retry_delays[attempt] * 2  # Double delay for rate limits
-                        if self.logger:
-                            self.logger.warning(f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1})")
-                        await asyncio.sleep(delay)
-                        continue
-                
-                # Check for temporary errors
-                elif any(err in error_msg for err in ["timeout", "connection", "503", "502", "500"]):
-                    if attempt < self._max_retries:
-                        delay = self._retry_delays[attempt]
-                        if self.logger:
-                            self.logger.warning(f"Temporary error, retrying in {delay}s: {str(e)[:100]}")
-                        await asyncio.sleep(delay)
-                        continue
-                
-                # Check for authentication errors (don't retry)
-                elif any(err in error_msg for err in ["auth", "permission", "401", "403"]):
-                    if self.logger:
-                        self.logger.error(f"Authentication error - not retrying: {e}")
-                    raise
-                
-                # Other errors - retry with backoff
-                else:
-                    if attempt < self._max_retries:
-                        delay = self._retry_delays[attempt]
-                        if self.logger:
-                            self.logger.warning(f"API error, retrying in {delay}s: {str(e)[:100]}")
-                        await asyncio.sleep(delay)
-                        continue
-                
-                # Max retries reached
-                if self.logger:
-                    self.logger.error(f"API call failed after {self._max_retries + 1} attempts: {e}")
-                raise
-    
-    async def _validate_api_config(self, generation_config: 'GeminiGenerationConfig') -> bool:
-        """Validate API configuration before making calls."""
-        try:
-            # Check if API key is available
-            api_key = require_google_api_key()
-            if not api_key:
-                raise ValueError("Google API key not available")
-            
-            # Validate model configuration
-            if not generation_config.model:
-                raise ValueError("Model configuration is missing")
-            
-            # Check if thinking configuration is valid for the model
-            if (generation_config.thinking_config and 
-                generation_config.thinking_config.enabled and 
-                not generation_config.model.supports_thinking):
-                
-                if self.logger:
-                    self.logger.warning(f"Model {generation_config.model.name} doesn't support thinking - disabling")
-                generation_config.thinking_config.enabled = False
-            
-            # Validate structured output configuration
-            if (generation_config.structured_output and 
-                generation_config.structured_output.enabled):
-                
-                from ..config.gemini_models import ModelCapability
-                if ModelCapability.STRUCTURED_OUTPUT not in generation_config.model.capabilities:
-                    if self.logger:
-                        self.logger.warning(f"Model {generation_config.model.name} doesn't support structured output - disabling")
-                    generation_config.structured_output.enabled = False
-            
-            return True
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"API configuration validation failed: {e}")
-            return False
-    
-    async def _format_api_contents(self, task: str, system_instruction: Optional[str] = None):
-        """Format contents for Google AI API with proper system instruction handling."""
-        if not system_instruction:
-            # Simple user message format
-            return task
-        
-        # Google AI API format for system + user messages
-        # Note: Google AI API has specific requirements for system instructions
-        try:
-            # Method 1: Combined in user message (most reliable)
-            combined_message = f"{system_instruction}\n\nUser Request: {task}"
-            return combined_message
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.warning(f"System instruction formatting failed, using simple format: {e}")
-            return task
-    
-    def get_api_stats(self) -> Dict[str, Any]:
-        """Get API usage statistics."""
-        return {
-            "total_api_calls": self._api_call_count,
-            "successful_tasks": self.successful_tasks,
-            "failed_tasks": self.failed_tasks,
-            "total_tokens_used": self.total_tokens_used,
-            "average_response_time_ms": self.average_response_time_ms,
-            "success_rate": self.successful_tasks / max(1, self.successful_tasks + self.failed_tasks),
-            "rate_limit_delay": self._rate_limit_delay,
-            "max_retries": self._max_retries
-        }
-    
-    def _update_conversation_history(self, task: str, response: str) -> None:
-        """Update conversation history."""
-        self.conversation_history.append({
-            "task": task,
-            "response": response,
-            "timestamp": time.time(),
-        })
-        
-        # Trim history to max length
-        if len(self.conversation_history) > self.max_history_length:
-            self.conversation_history = self.conversation_history[-self.max_history_length:]
-    
-    def _update_average_response_time(self, execution_time_ms: float) -> None:
-        """Update average response time metric."""
-        if self.successful_tasks == 1:
-            self.average_response_time_ms = execution_time_ms
-        else:
-            # Running average
-            self.average_response_time_ms = (
-                (self.average_response_time_ms * (self.successful_tasks - 1) + execution_time_ms) / 
-                self.successful_tasks
-            )
-    
-    def get_performance_metrics(self) -> Dict[str, Any]:
-        """Get performance metrics for this agent."""
-        success_rate = (
-            (self.successful_tasks / (self.successful_tasks + self.failed_tasks) * 100)
-            if (self.successful_tasks + self.failed_tasks) > 0
-            else 0
-        )
-        
-        return {
-            "total_tasks": self.total_tasks_completed,
-            "successful_tasks": self.successful_tasks,
-            "failed_tasks": self.failed_tasks,
-            "success_rate_percent": success_rate,
-            "average_response_time_ms": self.average_response_time_ms,
-            "total_tokens_used": self.total_tokens_used,
-            "conversation_length": len(self.conversation_history),
-        }
-    
-    def clear_conversation_history(self) -> None:
-        """Clear conversation history."""
-        self.conversation_history = []
-        if self.logger:
-            self.logger.info(f"Cleared conversation history for agent {self.name}")
-    
-    async def update_config(self, new_config: LLMAgentConfig) -> bool:
-        """
-        Update agent configuration and recreate ADK agent if needed.
-        
-        Args:
-            new_config: New configuration
-            
-        Returns:
-            Success status
-        """
-        try:
-            old_model = self.config.model
-            self.config = new_config
-            
-            # Recreate ADK agent if model changed
-            if old_model != new_config.model:
-                self._create_adk_agent()
-            
-            if self.logger:
-                self.logger.info(f"Updated configuration for agent {self.name}")
-            
-            return True
-            
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Failed to update configuration for agent {self.name}: {e}")
-            return False
+        return enhanced_task 

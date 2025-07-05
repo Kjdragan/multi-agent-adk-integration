@@ -449,6 +449,9 @@ research_agent = factory.create_llm_agent(
     priority_cost=False  # Use best model
 )
 
+# CRITICAL: Activate agent before orchestration
+await research_agent.activate()
+
 # Create custom domain expert
 ai_expert = factory.create_custom_agent(
     agent_type=CustomAgentType.DOMAIN_EXPERT,

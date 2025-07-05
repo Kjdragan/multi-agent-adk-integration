@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from functools import lru_cache
 import logging
+from dotenv import load_dotenv
 
 from .base import BaseConfig, Environment
 from .app import AppConfig
 from .services import ServicesConfig
-from .agents import AgentConfig
+from .agents import AgentRegistry
 
 
 class ConfigurationError(Exception):
@@ -53,10 +54,14 @@ class ConfigurationManager:
                 project_root = Path(__file__).parent.parent.parent
                 env_file_path = project_root / ".env"
             
-            # Ensure .env file exists
+            # Ensure .env file exists and load it
             if not env_file_path.exists():
                 self._logger.warning(f"No .env file found at {env_file_path}")
                 self._logger.warning("Using environment variables and defaults only")
+            else:
+                # Load .env file into environment
+                load_dotenv(env_file_path)
+                self._logger.info(f"Loaded environment variables from {env_file_path}")
             
             # Load all configurations
             self._load_configurations()
@@ -75,7 +80,7 @@ class ConfigurationManager:
         self._configs = {
             'app': AppConfig(),
             'services': ServicesConfig(),
-            'agents': AgentConfig()
+            'agents': AgentRegistry()
         }
     
     def _validate_configurations(self) -> None:
@@ -213,9 +218,19 @@ class ConfigurationManager:
     
     def get_google_api_key(self) -> Optional[str]:
         """Get Google API key with proper validation."""
-        key = os.getenv("GOOGLE_API_KEY")
-        if key and key != "your_google_api_key_here":
-            return key
+        if not self._validated:
+            # Fallback to environment if config not loaded yet
+            key = os.getenv("GOOGLE_API_KEY")
+            if key and key != "your_google_api_key_here":
+                return key
+            return None
+        
+        # Get from loaded config
+        app_config = self._configs.get('app')
+        if app_config and app_config.api_keys.google_api_key:
+            key = app_config.api_keys.google_api_key
+            if key != "your_google_api_key_here":
+                return key
         return None
     
     def get_environment_variable(self, var_name: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
@@ -296,7 +311,7 @@ def get_services_config() -> ServicesConfig:
     return get_config_manager().get_config('services')
 
 
-def get_agents_config() -> AgentConfig:
+def get_agents_config() -> AgentRegistry:
     """Convenience function to get agents configuration."""
     return get_config_manager().get_config('agents')
 
@@ -316,16 +331,14 @@ def require_google_api_key() -> str:
         key = config_manager.get_google_api_key()
         
         if not key:
-            # Check if Vertex AI is configured as fallback
+            # Check if Vertex AI is configured as alternative
             app_config = config_manager.get_config('app')
             if app_config.google_genai_use_vertexai:
-                # Try to get project from environment for Vertex AI
-                project = os.getenv("GOOGLE_CLOUD_PROJECT")
-                if project:
-                    raise ConfigurationError(
-                        "Vertex AI is configured but API key is required for this operation. "
-                        "Please set GOOGLE_API_KEY for direct API access."
-                    )
+                # Vertex AI is configured - caller should use ADC instead of API key
+                raise ConfigurationError(
+                    "Using Vertex AI with ADC. This function should not be called when "
+                    "GOOGLE_GENAI_USE_VERTEXAI=True. Use Vertex AI authentication instead."
+                )
             
             raise ConfigurationError(
                 "Google API key not configured. Please set GOOGLE_API_KEY environment variable "
@@ -338,6 +351,34 @@ def require_google_api_key() -> str:
         if isinstance(e, ConfigurationError):
             raise
         raise ConfigurationError(f"Failed to get Google API key: {e}")
+
+def should_use_vertexai() -> bool:
+    """
+    Check if Vertex AI should be used instead of direct API.
+    
+    Returns:
+        True if Vertex AI is configured and should be used
+    """
+    try:
+        config_manager = get_config_manager()
+        app_config = config_manager.get_config('app')
+        return app_config.google_genai_use_vertexai
+    except Exception:
+        return False
+
+def get_vertexai_project() -> Optional[str]:
+    """
+    Get the Google Cloud project for Vertex AI.
+    
+    Returns:
+        Project ID if configured, None otherwise
+    """
+    try:
+        config_manager = get_config_manager()
+        app_config = config_manager.get_config('app')
+        return app_config.google_cloud_project
+    except Exception:
+        return None
 
 def test_google_api_connection() -> Dict[str, Any]:
     """

@@ -81,6 +81,8 @@ python src/streamlit/launcher.py -e development &
 5. Watch the real-time progress indicator
 6. View comprehensive results with sources and analysis
 
+**Note**: The Streamlit interface automatically handles agent activation. For programmatic usage, see the API examples below.
+
 #### 3. Try Advanced Features
 ```
 Create a comprehensive analysis of artificial intelligence applications in healthcare, including current uses, benefits, challenges, and future opportunities.
@@ -348,6 +350,120 @@ The platform automatically uses external services for enhanced capabilities:
 - Live agent activity
 - Resource usage monitoring
 - System health dashboards
+
+## 🐍 Programmatic Usage (Python API)
+
+**⚠️ CRITICAL: Agents must be activated before orchestration!**
+
+### Basic Agent Usage Pattern
+```python
+import asyncio
+from src.agents import AgentFactory
+from src.agents.llm_agent import LLMRole
+
+async def basic_agent_example():
+    # 1. Create agent factory and agent
+    factory = AgentFactory()
+    agent = factory.create_llm_agent(
+        role=LLMRole.RESEARCHER,
+        auto_optimize_model=True,
+        enable_thinking=True
+    )
+    
+    # 2. CRITICAL: Activate agent before use
+    await agent.activate()
+    
+    try:
+        # 3. Execute task
+        result = await agent.execute_task(
+            "What are the benefits of renewable energy?"
+        )
+        
+        print(f"Success: {result.success}")
+        print(f"Result: {result.result}")
+        print(f"Execution time: {result.execution_time_ms}ms")
+        
+    finally:
+        # 4. Always deactivate when done
+        await agent.deactivate()
+
+# Run the example
+asyncio.run(basic_agent_example())
+```
+
+### Multi-Agent Orchestration Pattern
+```python
+import asyncio
+from src.agents import AgentFactory, AgentOrchestrator
+from src.agents.orchestrator import OrchestrationStrategy
+from src.agents.llm_agent import LLMRole
+from src.agents.base import AgentCapability
+
+async def orchestration_example():
+    # 1. Create factory and orchestrator
+    factory = AgentFactory()
+    orchestrator = AgentOrchestrator()
+    
+    # 2. Create multiple agents
+    researcher = factory.create_llm_agent(role=LLMRole.RESEARCHER)
+    analyst = factory.create_llm_agent(role=LLMRole.ANALYST)
+    synthesizer = factory.create_llm_agent(role=LLMRole.SYNTHESIZER)
+    
+    # 3. CRITICAL: Activate all agents
+    await researcher.activate()
+    await analyst.activate() 
+    await synthesizer.activate()
+    
+    try:
+        # 4. Execute orchestrated task
+        result = await orchestrator.orchestrate_task(
+            task="Analyze AI trends in healthcare and provide recommendations",
+            strategy=OrchestrationStrategy.ADAPTIVE,
+            required_capabilities=[
+                AgentCapability.RESEARCH,
+                AgentCapability.ANALYSIS,
+                AgentCapability.SYNTHESIS
+            ]
+        )
+        
+        print(f"Strategy used: {result.strategy_used}")
+        print(f"Agents involved: {len(result.agent_results)}")
+        print(f"Consensus score: {result.consensus_score}")
+        print(f"Result: {result.primary_result}")
+        
+    finally:
+        # 5. Deactivate all agents
+        await researcher.deactivate()
+        await analyst.deactivate()
+        await synthesizer.deactivate()
+
+# Run the orchestration example
+asyncio.run(orchestration_example())
+```
+
+### Agent Lifecycle Best Practices
+```python
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def managed_agent(factory, role):
+    """Context manager for proper agent lifecycle management."""
+    agent = factory.create_llm_agent(role=role)
+    await agent.activate()
+    try:
+        yield agent
+    finally:
+        await agent.deactivate()
+
+# Usage example
+async def safe_agent_usage():
+    factory = AgentFactory()
+    
+    async with managed_agent(factory, LLMRole.RESEARCHER) as agent:
+        result = await agent.execute_task("Research quantum computing")
+        print(result.result)
+    # Agent is automatically deactivated here
+```
 
 ## 🛠️ Quick Configuration
 

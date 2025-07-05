@@ -42,32 +42,32 @@ cp .env.example .env
 ### Running the Platform
 ```bash
 # Streamlit Interface (Production UX) - Port 8501
-python src/streamlit/launcher.py
+uv run python src/streamlit/launcher.py
 
 # Web Debug Interface (Development/Monitoring) - Port 8081  
-python src/web/launcher.py -e debug
+uv run python src/web/launcher.py -e debug
 
 # Both interfaces simultaneously
-python src/web/launcher.py -e debug &
-python src/streamlit/launcher.py -e development
+uv run python src/web/launcher.py -e debug &
+uv run python src/streamlit/launcher.py -e development
 
 # Custom configurations
-python src/streamlit/launcher.py -e production -p 8502
-python src/web/launcher.py -e development --host 0.0.0.0
+uv run python src/streamlit/launcher.py -e production -p 8502
+uv run python src/web/launcher.py -e development --host 0.0.0.0
 ```
 
 ### Testing Strategy
 ```bash
 # Comprehensive test runner (handles PYTHONPATH automatically)
-python run_tests.py unit              # Fast unit tests with mocks
-python run_tests.py integration       # Service interaction tests  
-python run_tests.py e2e              # Full workflow tests
-python run_tests.py all              # Complete test suite
-python run_tests.py coverage         # With coverage reporting
+uv run python run_tests.py unit              # Fast unit tests with mocks
+uv run python run_tests.py integration       # Service interaction tests  
+uv run python run_tests.py e2e              # Full workflow tests
+uv run python run_tests.py all              # Complete test suite
+uv run python run_tests.py coverage         # With coverage reporting
 
-# Direct pytest execution
-PYTHONPATH=. pytest tests/unit/test_agents.py::TestLLMAgent -v
-PYTHONPATH=. pytest tests/integration/test_orchestration.py -v
+# Direct pytest execution (uv automatically handles environment)
+uv run pytest tests/unit/test_agents.py::TestLLMAgent -v
+uv run pytest tests/integration/test_orchestration.py -v
 ```
 
 ### Code Quality & Development

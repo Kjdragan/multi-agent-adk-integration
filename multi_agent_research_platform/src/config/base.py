@@ -78,9 +78,14 @@ class RedisSettings(BaseModel):
     )
 
 
-class APIKeySettings(BaseModel):
+class APIKeySettings(BaseSettings):
     """API key configuration."""
-    model_config = ConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
     
     # Google/Gemini APIs
     google_api_key: Optional[str] = Field(default=None, description="Google API key")
