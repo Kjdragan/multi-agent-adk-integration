@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Union
 from enum import Enum
 
 from google.adk.agents import Agent as ADKAgent
+from google.adk.runners import Runner, RunConfig
+from google.genai.types import Content, Part
 
 from .base import Agent, AgentType, AgentCapability, AgentResult
 from ..platform_logging import RunLogger
@@ -194,8 +196,9 @@ class LLMAgent(Agent):
         self.config = config
         self.tools = tools or []
         
-        # Create ADK agent instance
+        # Create ADK agent and runner
         self._create_adk_agent()
+        self._create_runner()
         
         # Conversation history for context
         self.conversation_history: List[Dict[str, str]] = []
@@ -303,14 +306,14 @@ class LLMAgent(Agent):
 
 You have access to various tools and can search for information when needed. Always strive for accuracy and cite your sources when possible.""".strip()
             
-            # Determine model for ADK agent - use simple model names that ADK expects
+            # Determine model for ADK agent - let ADK resolve the model
             if self.config.model:
                 model_id = self.config.model.value
             else:
                 # Default to Flash model
                 model_id = GeminiModel.FLASH.value
             
-            # Create ADK agent
+            # Create ADK agent - let ADK's internal registry resolve the model
             self.adk_agent = ADKAgent(
                 name=self.name.lower().replace(" ", "_"),
                 model=model_id,
@@ -326,6 +329,36 @@ You have access to various tools and can search for information when needed. Alw
             if self.logger:
                 self.logger.error(f"Failed to create ADK agent for {self.name}: {e}")
             self.adk_agent = None
+    
+    def _create_runner(self) -> None:
+        """Create the ADK runner for proper agent execution."""
+        try:
+            if not self.adk_agent:
+                self.runner = None
+                return
+            
+            # ADK Runner needs compatible services - let's create adapters if needed
+            from google.adk.runners import InMemorySessionService, InMemoryArtifactService
+            
+            # Use ADK's built-in services for now
+            adk_session_service = InMemorySessionService()
+            adk_artifact_service = InMemoryArtifactService()
+            
+            # Create the runner
+            self.runner = Runner(
+                app_name=f"llm_agent_{self.name}",
+                agent=self.adk_agent,
+                session_service=adk_session_service,
+                artifact_service=adk_artifact_service,
+            )
+            
+            if self.logger:
+                self.logger.info(f"Created ADK runner for {self.name}")
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Failed to create ADK runner for {self.name}: {e}")
+            self.runner = None
     
     def get_capabilities(self) -> List[AgentCapability]:
         """Get the capabilities of this LLM agent."""
@@ -369,19 +402,22 @@ You have access to various tools and can search for information when needed. Alw
             # Enhance task with context if needed
             enhanced_task = await self._enhance_task_with_context(task, context_info)
             
-            # Execute with ADK agent
-            if self.adk_agent:
-                # Use the actual ADK agent to execute the task
-                response = await self.adk_agent.generate_content(enhanced_task)
-                tools_used.append("adk_agent")
+            # Execute with ADK runner
+            if hasattr(self, 'runner') and self.runner:
+                # Use the ADK runner to execute the task properly
+                response_text = await self._execute_with_runner(enhanced_task)
+                tools_used.append("adk_runner")
             else:
-                # Create ADK agent if not exists
+                # Create ADK runner if not exists
                 self._create_adk_agent()
-                if self.adk_agent:
-                    response = await self.adk_agent.generate_content(enhanced_task)
-                    tools_used.append("adk_agent")
+                self._create_runner()
+                if hasattr(self, 'runner') and self.runner:
+                    response_text = await self._execute_with_runner(enhanced_task)
+                    tools_used.append("adk_runner")
                 else:
-                    raise RuntimeError("Failed to create ADK agent and no fallback available")
+                    raise RuntimeError("Failed to create ADK runner and no fallback available")
+            
+            response = response_text
             
             # Store result in memory if enabled
             if self.config.enable_memory and self.memory_service:
@@ -575,4 +611,61 @@ You have access to various tools and can search for information when needed. Alw
                 memory_context += f"- {memory.get('text', '')[:200]}...\n"
             enhanced_task += memory_context
         
-        return enhanced_task 
+        return enhanced_task
+    
+    async def _execute_with_runner(self, task: str) -> str:
+        """Execute task using ADK runner and collect the response."""
+        try:
+            # Generate unique session/user IDs for this execution
+            import uuid
+            user_id = f"user_{uuid.uuid4().hex[:8]}"
+            session_id = f"session_{uuid.uuid4().hex[:8]}"
+            app_name = f"llm_agent_{self.name}"
+            
+            # Create session first
+            session = await self.runner.session_service.create_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id
+            )
+            
+            # Execute with runner using proper Content format
+            message_content = Content(
+                role="user",
+                parts=[Part(text=task)]
+            )
+            
+            events = self.runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=message_content
+            )
+            
+            # Collect response from events
+            response_parts = []
+            async for event in events:
+                # Look for text content in events
+                if hasattr(event, 'content') and event.content:
+                    if hasattr(event.content, 'parts'):
+                        for part in event.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                response_parts.append(part.text)
+                # Also check for direct text in event
+                elif hasattr(event, 'text') and event.text:
+                    response_parts.append(event.text)
+                # Check for message content
+                elif hasattr(event, 'message') and hasattr(event.message, 'content'):
+                    response_parts.append(str(event.message.content))
+                # Fallback - convert event to string if it has text-like content
+                elif str(event).strip() and not str(event).startswith('<'):
+                    response_parts.append(str(event))
+            
+            if response_parts:
+                return " ".join(response_parts).strip()
+            else:
+                return "No response received from ADK runner"
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"ADK runner execution failed: {e}")
+            raise 
